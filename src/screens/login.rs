@@ -1,9 +1,8 @@
-use crate::api::auth::{QrCodeData, QrPollData};
+use crate::api::auth::QrCodeData;
+use crate::ui::theme::Theme;
 use crate::ui::QrCodeWidget;
-use anyhow::Result;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::Style,
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
@@ -19,6 +18,13 @@ pub enum LoginState {
 pub struct LoginScreen {
     pub state: LoginState,
     pub status_message: String,
+    theme: Theme,
+}
+
+impl Default for LoginScreen {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LoginScreen {
@@ -26,6 +32,7 @@ impl LoginScreen {
         Self {
             state: LoginState::Idle,
             status_message: "Press 'r' to refresh QR code".to_string(),
+            theme: Theme::default(),
         }
     }
 
@@ -46,13 +53,35 @@ impl LoginScreen {
         f.render_widget(title, chunks[0]);
 
         match &self.state {
-            LoginState::QrWaiting { qrcode_data } => {
-                if let Ok(qr_widget) = QrCodeWidget::new(&qrcode_data.url) {
-                    f.render_widget(qr_widget, chunks[1]);
+            LoginState::QrWaiting { qrcode_data } => match QrCodeWidget::new(&qrcode_data.url) {
+                Ok(qr_widget) => f.render_widget(qr_widget, chunks[1]),
+                Err(_) => {
+                    let error_msg = Paragraph::new("Failed to generate QR code")
+                        .alignment(Alignment::Center)
+                        .style(self.theme.error_style());
+                    f.render_widget(error_msg, chunks[1]);
                 }
+            },
+            LoginState::QrScanned => {
+                let msg = Paragraph::new("QR code scanned! Please confirm on your device...")
+                    .alignment(Alignment::Center)
+                    .style(self.theme.normal_style());
+                f.render_widget(msg, chunks[1]);
             }
-            _ => {
-                let msg = Paragraph::new(self.status_message.clone()).alignment(Alignment::Center);
+            LoginState::LoggedIn => {
+                let msg = Paragraph::new("Login successful!")
+                    .alignment(Alignment::Center)
+                    .style(self.theme.title_style());
+                f.render_widget(msg, chunks[1]);
+            }
+            LoginState::Idle | LoginState::Error(_) => {
+                let style = match &self.state {
+                    LoginState::Error(_) => self.theme.error_style(),
+                    _ => self.theme.normal_style(),
+                };
+                let msg = Paragraph::new(self.status_message.clone())
+                    .alignment(Alignment::Center)
+                    .style(style);
                 f.render_widget(msg, chunks[1]);
             }
         }

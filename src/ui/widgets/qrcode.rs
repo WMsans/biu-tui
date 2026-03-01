@@ -1,10 +1,5 @@
 use qrcode::QrCode;
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::{Color, Style},
-    widgets::Widget,
-};
+use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
 
 pub struct QrCodeWidget {
     code: QrCode,
@@ -21,7 +16,6 @@ impl Widget for QrCodeWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let width = self.code.width();
         let block = "█";
-        let space = " ";
 
         let start_x = area.x + (area.width.saturating_sub(width as u16 * 2)) / 2;
         let start_y = area.y + (area.height.saturating_sub(width as u16)) / 2;
