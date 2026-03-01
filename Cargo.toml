@@ -1,0 +1,25 @@
+[package]
+name = "biu-tui"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal-based Bilibili music player"
+license = "PolyForm-Noncommercial-1.0.0"
+
+[dependencies]
+ratatui = "0.29"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "cookies", "rustls-tls"] }
+ffmpeg-next = "8"
+cpal = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+qrcode = "0.14"
+anyhow = "1"
+thiserror = "2"
+dirs = "6"
+crossterm = "0.28"
+futures = "0.3"
+parking_lot = "0.12"
+
+[dev-dependencies]
+tokio-test = "0.4"
