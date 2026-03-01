@@ -1,0 +1,61 @@
+use anyhow::Result;
+use crate::api::{BilibiliClient, ApiResponse};
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct HistoryItem {
+    pub oid: u64,
+    pub bvid: Option<String>,
+    pub title: String,
+    pub cover: Option<String>,
+    pub duration: u32,
+    pub author_name: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct WatchLaterItem {
+    pub bvid: String,
+    pub title: String,
+    pub cover: Option<String>,
+    pub duration: u32,
+    pub owner: Option<Owner>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct Owner {
+    pub mid: u64,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct HistoryListData {
+    list: Option<HistoryListInner>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct HistoryListInner {
+    vlist: Option<Vec<HistoryItem>>,
+}
+
+impl BilibiliClient {
+    pub async fn get_history(&self, page: u32) -> Result<Vec<HistoryItem>> {
+        let path = format!("/x/v2/history?ps=20&pn={}", page);
+        let response: ApiResponse<HistoryListData> = self.get(&path).await?;
+
+        Ok(response.data
+            .and_then(|d| d.list)
+            .and_then(|l| l.vlist)
+            .unwrap_or_default())
+    }
+
+    pub async fn get_watch_later(&self) -> Result<Vec<WatchLaterItem>> {
+        let path = "/x/v2/history/toview";
+        let response: ApiResponse<serde_json::Value> = self.get(path).await?;
+
+        let items = response.data
+            .and_then(|d| d.get("list").cloned())
+            .and_then(|l| serde_json::from_value(l).ok())
+            .unwrap_or_default();
+
+        Ok(items)
+    }
+}
