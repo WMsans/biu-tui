@@ -95,7 +95,14 @@ impl AudioDecoder {
 
 fn extract_samples(frame: &ffmpeg::frame::Audio) -> Vec<i16> {
     let data = frame.data(0);
-    data.chunks_exact(2)
+    // data(0) returns a slice sized by linesize[0], which may include
+    // alignment padding beyond the actual sample data. Use nb_samples
+    // to compute the exact number of valid bytes.
+    // For packed stereo i16: valid_bytes = nb_samples * 2 channels * 2 bytes_per_sample
+    let valid_bytes = frame.samples() * frame.channels() as usize * 2;
+    let valid_data = &data[..valid_bytes.min(data.len())];
+    valid_data
+        .chunks_exact(2)
         .map(|chunk| i16::from_ne_bytes([chunk[0], chunk[1]]))
         .collect()
 }
