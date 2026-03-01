@@ -6,7 +6,7 @@ use crate::api::types::*;
 const BILIBILI_BASE_URL: &str = "https://api.bilibili.com";
 
 pub struct BilibiliClient {
-    client: Client,
+    pub(super) client: Client,
     cookie_jar: Arc<Jar>,
     csrf: Option<String>,
 }
