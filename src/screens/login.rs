@@ -10,7 +10,7 @@ use ratatui::{
 pub enum LoginState {
     Idle,
     QrWaiting { qrcode_data: QrCodeData },
-    QrScanned,
+    QrScanned { qrcode_data: QrCodeData },
     LoggedIn,
     Error(String),
 }
@@ -53,20 +53,16 @@ impl LoginScreen {
         f.render_widget(title, chunks[0]);
 
         match &self.state {
-            LoginState::QrWaiting { qrcode_data } => match QrCodeWidget::new(&qrcode_data.url) {
-                Ok(qr_widget) => f.render_widget(qr_widget, chunks[1]),
-                Err(_) => {
-                    let error_msg = Paragraph::new("Failed to generate QR code")
-                        .alignment(Alignment::Center)
-                        .style(self.theme.error_style());
-                    f.render_widget(error_msg, chunks[1]);
+            LoginState::QrWaiting { qrcode_data } | LoginState::QrScanned { qrcode_data } => {
+                match QrCodeWidget::new(&qrcode_data.url) {
+                    Ok(qr_widget) => f.render_widget(qr_widget, chunks[1]),
+                    Err(_) => {
+                        let error_msg = Paragraph::new("Failed to generate QR code")
+                            .alignment(Alignment::Center)
+                            .style(self.theme.error_style());
+                        f.render_widget(error_msg, chunks[1]);
+                    }
                 }
-            },
-            LoginState::QrScanned => {
-                let msg = Paragraph::new("QR code scanned! Please confirm on your device...")
-                    .alignment(Alignment::Center)
-                    .style(self.theme.normal_style());
-                f.render_widget(msg, chunks[1]);
             }
             LoginState::LoggedIn => {
                 let msg = Paragraph::new("Login successful!")

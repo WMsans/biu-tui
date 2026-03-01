@@ -116,16 +116,34 @@ impl App {
 
     fn poll_qr_login(&mut self) -> Result<()> {
         if let Screen::Login(login) = &mut self.screen {
-            if let LoginState::QrWaiting { qrcode_data } = &login.state {
+            let qrcode_key = match &login.state {
+                LoginState::QrWaiting { qrcode_data } | LoginState::QrScanned { qrcode_data } => {
+                    eprintln!(
+                        "State matches, will poll with key: {}",
+                        qrcode_data.qrcode_key
+                    );
+                    Some(qrcode_data.qrcode_key.clone())
+                }
+                _ => {
+                    eprintln!(
+                        "State doesn't match for polling: {:?}",
+                        std::mem::discriminant(&login.state)
+                    );
+                    None
+                }
+            };
+
+            if let Some(qrcode_key) = qrcode_key {
                 let should_poll = self
                     .last_qr_poll
                     .map(|last| last.elapsed() >= Duration::from_secs(2))
                     .unwrap_or(true);
 
+                eprintln!("Should poll: {}", should_poll);
+
                 if should_poll {
                     self.last_qr_poll = Some(Instant::now());
 
-                    let qrcode_key = qrcode_data.qrcode_key.clone();
                     let poll_result = {
                         let client = self.client.lock();
                         let rt = tokio::runtime::Runtime::new()?;
@@ -135,8 +153,8 @@ impl App {
                     match poll_result {
                         Ok(poll_data) => {
                             eprintln!(
-                                "Poll result: code={}, message={}",
-                                poll_data.code, poll_data.message
+                                "Poll result: code={}, message={}, url={:?}",
+                                poll_data.code, poll_data.message, poll_data.url
                             );
                             match poll_data.code {
                                 0 => {
@@ -160,14 +178,27 @@ impl App {
                                     }
                                 }
                                 86038 => {
-                                    login.state = LoginState::QrScanned;
-                                }
-                                86090 => {
                                     login.state = LoginState::Error(
                                         "QR code expired. Press 'r' to refresh.".to_string(),
                                     );
                                 }
-                                _ => {}
+                                86090 => {
+                                    eprintln!("Got code 86090 (scanned, waiting confirmation)");
+                                    if let LoginState::QrWaiting { qrcode_data } = &login.state {
+                                        eprintln!("Transitioning QrWaiting -> QrScanned");
+                                        login.state = LoginState::QrScanned {
+                                            qrcode_data: qrcode_data.clone(),
+                                        };
+                                        login.status_message =
+                                            "QR code scanned! Please confirm on your device..."
+                                                .to_string();
+                                    } else {
+                                        eprintln!("Already in QrScanned state, continuing to wait");
+                                    }
+                                }
+                                _ => {
+                                    eprintln!("Unhandled poll code: {}", poll_data.code);
+                                }
                             }
                         }
                         Err(e) => {
