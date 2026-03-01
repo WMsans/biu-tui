@@ -6,10 +6,15 @@ pub struct AudioDecoder {
     resampler: ffmpeg::software::resampling::Context,
     input: ffmpeg::format::context::Input,
     stream_index: usize,
+    output_sample_rate: u32,
 }
 
 impl AudioDecoder {
     pub fn from_url(url: &str) -> Result<Self> {
+        Self::from_url_with_sample_rate(url, 44100)
+    }
+
+    pub fn from_url_with_sample_rate(url: &str, output_sample_rate: u32) -> Result<Self> {
         ffmpeg::init()?;
 
         let mut options = ffmpeg::Dictionary::new();
@@ -36,7 +41,7 @@ impl AudioDecoder {
             decoder.rate(),
             ffmpeg::format::Sample::I16(ffmpeg::format::sample::Type::Packed),
             ffmpeg::channel_layout::ChannelLayout::STEREO,
-            44100,
+            output_sample_rate,
         )?;
 
         Ok(Self {
@@ -44,11 +49,16 @@ impl AudioDecoder {
             resampler,
             input: ictx,
             stream_index,
+            output_sample_rate,
         })
     }
 
     pub fn sample_rate(&self) -> u32 {
         self.decoder.rate()
+    }
+
+    pub fn output_sample_rate(&self) -> u32 {
+        self.output_sample_rate
     }
 
     pub fn channels(&self) -> u16 {

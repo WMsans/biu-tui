@@ -7,8 +7,6 @@ use std::time::Duration;
 
 use super::decoder::AudioDecoder;
 
-const BUFFER_SIZE: usize = 44100 * 2 * 3;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayerState {
     Stopped,
@@ -21,9 +19,14 @@ pub struct AudioPlayer {
     position: Arc<Mutex<Duration>>,
     duration: Arc<Mutex<Duration>>,
     volume: Arc<Mutex<f32>>,
+    sample_rate: Arc<Mutex<u32>>,
     _stream: Option<cpal::Stream>,
     audio_buffer: Arc<Mutex<VecDeque<i16>>>,
     _decoder_thread: Option<std::thread::JoinHandle<()>>,
+}
+
+fn buffer_size_for_sample_rate(sample_rate: u32) -> usize {
+    (sample_rate as usize) * 2 * 3
 }
 
 impl AudioPlayer {
@@ -33,8 +36,9 @@ impl AudioPlayer {
             position: Arc::new(Mutex::new(Duration::ZERO)),
             duration: Arc::new(Mutex::new(Duration::ZERO)),
             volume: Arc::new(Mutex::new(1.0)),
+            sample_rate: Arc::new(Mutex::new(44100)),
             _stream: None,
-            audio_buffer: Arc::new(Mutex::new(VecDeque::with_capacity(BUFFER_SIZE))),
+            audio_buffer: Arc::new(Mutex::new(VecDeque::new())),
             _decoder_thread: None,
         })
     }
@@ -66,22 +70,27 @@ impl AudioPlayer {
         let device = host.default_output_device().context("No output device")?;
         let supported_config = device.default_output_config()?;
         let config = supported_config.config();
+        let sample_rate = config.sample_rate.0;
+        *self.sample_rate.lock() = sample_rate;
 
         *self.position.lock() = Duration::ZERO;
         *self.state.lock() = PlayerState::Playing;
 
+        let buffer_size = buffer_size_for_sample_rate(sample_rate);
         let audio_buffer = self.audio_buffer.clone();
         let state = self.state.clone();
         let url_owned = url.to_string();
 
         let decoder_thread = std::thread::spawn(move || {
-            if let Ok(mut decoder) = AudioDecoder::from_url(&url_owned) {
+            if let Ok(mut decoder) =
+                AudioDecoder::from_url_with_sample_rate(&url_owned, sample_rate)
+            {
                 while *state.lock() == PlayerState::Playing {
                     match decoder.decode_next() {
                         Ok(Some(samples)) => {
                             let mut buffer = audio_buffer.lock();
                             for sample in samples {
-                                if buffer.len() < BUFFER_SIZE {
+                                if buffer.len() < buffer_size {
                                     buffer.push_back(sample);
                                 }
                             }
