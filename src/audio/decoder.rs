@@ -72,16 +72,10 @@ impl AudioDecoder {
 
                 let mut decoded = ffmpeg::frame::Audio::empty();
                 while self.decoder.receive_frame(&mut decoded).is_ok() {
-                    let mut resampled = ffmpeg::frame::Audio::empty();
-                    self.resampler.run(&decoded, &mut resampled)?;
-
-                    let data = resampled.data(0);
-                    let samples: Vec<i16> = data
-                        .chunks_exact(2)
-                        .map(|chunk| i16::from_ne_bytes([chunk[0], chunk[1]]))
-                        .collect();
-
-                    return Ok(Some(samples));
+                    let samples = resample_and_collect(&mut self.resampler, &decoded)?;
+                    if !samples.is_empty() {
+                        return Ok(Some(samples));
+                    }
                 }
             }
         }
@@ -89,18 +83,43 @@ impl AudioDecoder {
         self.decoder.send_eof()?;
         let mut decoded = ffmpeg::frame::Audio::empty();
         while self.decoder.receive_frame(&mut decoded).is_ok() {
-            let mut resampled = ffmpeg::frame::Audio::empty();
-            self.resampler.run(&decoded, &mut resampled)?;
-
-            let data = resampled.data(0);
-            let samples: Vec<i16> = data
-                .chunks_exact(2)
-                .map(|chunk| i16::from_ne_bytes([chunk[0], chunk[1]]))
-                .collect();
-
-            return Ok(Some(samples));
+            let samples = resample_and_collect(&mut self.resampler, &decoded)?;
+            if !samples.is_empty() {
+                return Ok(Some(samples));
+            }
         }
 
         Ok(None)
     }
+}
+
+fn extract_samples(frame: &ffmpeg::frame::Audio) -> Vec<i16> {
+    let data = frame.data(0);
+    data.chunks_exact(2)
+        .map(|chunk| i16::from_ne_bytes([chunk[0], chunk[1]]))
+        .collect()
+}
+
+fn resample_and_collect(
+    resampler: &mut ffmpeg::software::resampling::Context,
+    decoded: &ffmpeg::frame::Audio,
+) -> Result<Vec<i16>> {
+    let mut all_samples = Vec::new();
+
+    let mut resampled = ffmpeg::frame::Audio::empty();
+    let delay = resampler.run(decoded, &mut resampled)?;
+    all_samples.extend(extract_samples(&resampled));
+
+    // Flush any remaining samples buffered inside the resampler
+    if delay.is_some() {
+        loop {
+            let mut flushed = ffmpeg::frame::Audio::empty();
+            match resampler.flush(&mut flushed)? {
+                Some(_) => all_samples.extend(extract_samples(&flushed)),
+                None => break,
+            }
+        }
+    }
+
+    Ok(all_samples)
 }

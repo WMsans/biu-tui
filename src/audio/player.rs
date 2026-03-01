@@ -85,13 +85,26 @@ impl AudioPlayer {
             if let Ok(mut decoder) =
                 AudioDecoder::from_url_with_sample_rate(&url_owned, sample_rate)
             {
+                let min_buffer_size = buffer_size / 3;
                 while *state.lock() == PlayerState::Playing {
                     match decoder.decode_next() {
                         Ok(Some(samples)) => {
-                            let mut buffer = audio_buffer.lock();
-                            for sample in samples {
-                                if buffer.len() < buffer_size {
-                                    buffer.push_back(sample);
+                            // Wait until there's room in the buffer instead of dropping samples
+                            let mut offset = 0;
+                            while offset < samples.len() {
+                                {
+                                    let mut buffer = audio_buffer.lock();
+                                    while offset < samples.len() && buffer.len() < buffer_size {
+                                        buffer.push_back(samples[offset]);
+                                        offset += 1;
+                                    }
+                                }
+                                if offset < samples.len() {
+                                    // Buffer full — check if we should still be playing
+                                    if *state.lock() != PlayerState::Playing {
+                                        break;
+                                    }
+                                    std::thread::sleep(Duration::from_millis(1));
                                 }
                             }
                         }
@@ -103,26 +116,57 @@ impl AudioPlayer {
                             break;
                         }
                     }
-                    std::thread::sleep(Duration::from_millis(10));
+
+                    let current_size = audio_buffer.lock().len();
+                    if current_size < min_buffer_size {
+                        std::thread::sleep(Duration::from_millis(1));
+                    } else {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
                 }
             }
         });
 
+        let initial_buffer_size = buffer_size / 4;
+        loop {
+            let current_size = self.audio_buffer.lock().len();
+            if current_size >= initial_buffer_size {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
         let audio_buffer_clone = self.audio_buffer.clone();
         let volume_clone = self.volume.clone();
+        let channels = config.channels as usize;
         let stream = device.build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 let mut buffer = audio_buffer_clone.lock();
                 let vol = *volume_clone.lock();
 
-                for frame in data.chunks_mut(2) {
-                    let left_sample = buffer.pop_front().unwrap_or(0) as f32 / i16::MAX as f32;
-                    let right_sample = buffer.pop_front().unwrap_or(0) as f32 / i16::MAX as f32;
+                for frame in data.chunks_mut(channels) {
+                    // Our decoder outputs stereo (2 channels).
+                    // Pop left and right from the buffer.
+                    let left_sample = if buffer.len() >= 2 {
+                        buffer.pop_front().unwrap() as f32 / i16::MAX as f32
+                    } else {
+                        0.0
+                    };
+                    let right_sample = if !buffer.is_empty() {
+                        buffer.pop_front().unwrap() as f32 / i16::MAX as f32
+                    } else {
+                        0.0
+                    };
 
+                    // Write stereo samples to first two channels,
+                    // silence any additional channels (e.g. 5.1 surround)
                     frame[0] = left_sample * vol;
                     if frame.len() > 1 {
                         frame[1] = right_sample * vol;
+                    }
+                    for ch in frame.iter_mut().skip(2) {
+                        *ch = 0.0;
                     }
                 }
             },
