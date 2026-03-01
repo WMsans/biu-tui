@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use reqwest::{cookie::Jar, Client};
 use std::sync::Arc;
 use crate::api::types::*;
+use crate::api::UserInfo;
 
 const BILIBILI_BASE_URL: &str = "https://api.bilibili.com";
 
@@ -9,6 +10,7 @@ pub struct BilibiliClient {
     pub(super) client: Client,
     cookie_jar: Arc<Jar>,
     csrf: Option<String>,
+    pub mid: Option<u64>,
 }
 
 impl BilibiliClient {
@@ -24,11 +26,16 @@ impl BilibiliClient {
             client,
             cookie_jar,
             csrf: None,
+            mid: None,
         })
     }
 
     pub fn set_csrf(&mut self, csrf: String) {
         self.csrf = Some(csrf);
+    }
+
+    pub fn set_mid(&mut self, mid: u64) {
+        self.mid = Some(mid);
     }
 
     pub async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<ApiResponse<T>> {
@@ -47,5 +54,10 @@ impl BilibiliClient {
         let response = self.client.post(&url).form(&form_data).send().await?;
         let api_response = response.json::<ApiResponse<T>>().await?;
         Ok(api_response)
+    }
+
+    pub async fn get_user_info(&self) -> Result<UserInfo> {
+        let response: ApiResponse<UserInfo> = self.get("/x/space/myinfo").await?;
+        response.data.context("Failed to get user info")
     }
 }

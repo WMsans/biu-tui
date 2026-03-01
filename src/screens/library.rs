@@ -1,11 +1,13 @@
+use crate::api::{BilibiliClient, HistoryItem, WatchLaterItem};
 use crate::api::{FavoriteFolder, FavoriteResource};
-use crate::api::{HistoryItem, WatchLaterItem};
+use parking_lot::Mutex;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs},
     Frame,
 };
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LibraryTab {
@@ -36,6 +38,33 @@ impl LibraryScreen {
             list_state: ListState::default(),
             selected_folder: None,
         }
+    }
+
+    pub async fn load_data(&mut self, client: Arc<Mutex<BilibiliClient>>) -> anyhow::Result<()> {
+        let (folders, watch_later, history) = {
+            let client = client.lock();
+            let mid = client.mid;
+            
+            let (folders, watch_later, history) = tokio::try_join!(
+                async {
+                    if let Some(mid) = mid {
+                        client.get_created_folders(mid).await
+                    } else {
+                        Ok(Vec::new())
+                    }
+                },
+                client.get_watch_later(),
+                client.get_history(1)
+            )?;
+            
+            (folders, watch_later, history)
+        };
+
+        self.folders = folders;
+        self.watch_later = watch_later;
+        self.history = history;
+        
+        Ok(())
     }
 
     pub fn render(&mut self, f: &mut Frame, area: Rect) {
@@ -112,7 +141,7 @@ impl LibraryScreen {
             .highlight_style(Style::default().bg(Color::DarkGray));
         f.render_stateful_widget(list, chunks[1], &mut self.list_state);
 
-        let help = Paragraph::new("[j/k] Navigate  [Enter] Select  [d] Download  [Tab] Switch")
+        let help = Paragraph::new("[j/k] Navigate  [Enter] Select  [Esc] Back  [d] Download  [Tab] Switch")
             .block(Block::default().borders(Borders::TOP));
         f.render_widget(help, chunks[2]);
     }
@@ -150,6 +179,35 @@ impl LibraryScreen {
             }
             LibraryTab::WatchLater => self.watch_later.len(),
             LibraryTab::History => self.history.len(),
+        }
+    }
+
+    pub fn select_folder(&mut self, client: Arc<Mutex<BilibiliClient>>) -> anyhow::Result<()> {
+        if self.current_tab == LibraryTab::Favorites && self.selected_folder.is_none() {
+            if let Some(idx) = self.list_state.selected() {
+                if idx < self.folders.len() {
+                    let folder_id = self.folders[idx].id;
+                    self.selected_folder = Some(folder_id);
+                    
+                    let resources = {
+                        let client = client.lock();
+                        let rt = tokio::runtime::Runtime::new()?;
+                        rt.block_on(client.get_folder_resources(folder_id, 1))?
+                    };
+                    
+                    self.resources = resources.0;
+                    self.list_state.select(Some(0));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn go_back(&mut self) {
+        if self.selected_folder.is_some() {
+            self.selected_folder = None;
+            self.resources.clear();
+            self.list_state.select(Some(0));
         }
     }
 }

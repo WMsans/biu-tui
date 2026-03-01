@@ -108,6 +108,12 @@ impl App {
                 }
                 KeyCode::Char('j') | KeyCode::Down => library.next_item(),
                 KeyCode::Char('k') | KeyCode::Up => library.prev_item(),
+                KeyCode::Enter => {
+                    if let Err(e) = library.select_folder(self.client.clone()) {
+                        eprintln!("Failed to select folder: {}", e);
+                    }
+                }
+                KeyCode::Esc | KeyCode::Backspace => library.go_back(),
                 _ => {}
             },
         }
@@ -144,9 +150,11 @@ impl App {
                                 if let Some(url) = poll_data.url {
                                     match self.handle_qr_login_success(&url) {
                                         Ok(_) => {
-                                            if let Screen::Login(login) = &mut self.screen {
-                                                login.state = LoginState::LoggedIn;
+                                            let mut library = LibraryScreen::new();
+                                            if let Err(e) = self.load_library_data(&mut library) {
+                                                eprintln!("Failed to load library data: {}", e);
                                             }
+                                            self.screen = Screen::Library(library);
                                         }
                                         Err(e) => {
                                             if let Screen::Login(login) = &mut self.screen {
@@ -216,16 +224,32 @@ impl App {
 
         crate::storage::CookieStorage::save(&cookies)?;
 
+        let mut client = self.client.lock();
+
         if let Some(csrf) = cookies
             .split(';')
             .find(|s| s.trim().starts_with("bili_jct="))
             .and_then(|s| s.split('=').nth(1))
             .map(|s| s.trim().to_string())
         {
-            let mut client = self.client.lock();
             client.set_csrf(csrf);
         }
 
+        if let Some(mid) = cookies
+            .split(';')
+            .find(|s| s.trim().starts_with("DedeUserID="))
+            .and_then(|s| s.split('=').nth(1))
+            .and_then(|s| s.trim().parse::<u64>().ok())
+        {
+            client.set_mid(mid);
+        }
+
+        Ok(())
+    }
+
+    fn load_library_data(&mut self, library: &mut LibraryScreen) -> Result<()> {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(library.load_data(self.client.clone()))?;
         Ok(())
     }
 
