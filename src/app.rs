@@ -146,8 +146,8 @@ impl App {
                 KeyCode::Char('j') | KeyCode::Down => library.next_item(),
                 KeyCode::Char('k') | KeyCode::Up => library.prev_item(),
                 KeyCode::Enter => {
-                    if let Err(e) = library.select_folder(self.client.clone()) {
-                        eprintln!("Failed to select folder: {}", e);
+                    if let Err(e) = library.handle_enter(self.client.clone(), &mut self.player) {
+                        eprintln!("Failed to handle enter: {}", e);
                     }
                 }
                 KeyCode::Esc | KeyCode::Backspace => library.go_back(),

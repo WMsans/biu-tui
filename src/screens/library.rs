@@ -1,5 +1,6 @@
 use crate::api::{BilibiliClient, HistoryItem, WatchLaterItem};
 use crate::api::{FavoriteFolder, FavoriteResource};
+use crate::audio::AudioPlayer;
 use parking_lot::Mutex;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -198,24 +199,100 @@ impl LibraryScreen {
         }
     }
 
-    pub fn select_folder(&mut self, client: Arc<Mutex<BilibiliClient>>) -> anyhow::Result<()> {
-        if self.current_tab == LibraryTab::Favorites && self.selected_folder.is_none() {
-            if let Some(idx) = self.list_state.selected() {
-                if idx < self.folders.len() {
-                    let folder_id = self.folders[idx].id;
-                    self.selected_folder = Some(folder_id);
-                    
-                    let resources = {
-                        let client = client.lock();
-                        let rt = tokio::runtime::Runtime::new()?;
-                        rt.block_on(client.get_folder_resources(folder_id, 1))?
-                    };
-                    
-                    self.resources = resources.0;
-                    self.list_state.select(Some(0));
+    pub fn handle_enter(
+        &mut self,
+        client: Arc<Mutex<BilibiliClient>>,
+        player: &mut Option<AudioPlayer>,
+    ) -> anyhow::Result<()> {
+        match self.current_tab {
+            LibraryTab::Favorites => {
+                if self.selected_folder.is_none() {
+                    self.select_folder(client)?;
+                } else {
+                    self.play_selected(client, player)?;
                 }
             }
+            LibraryTab::WatchLater | LibraryTab::History => {
+                self.play_selected(client, player)?;
+            }
         }
+        Ok(())
+    }
+
+    fn select_folder(&mut self, client: Arc<Mutex<BilibiliClient>>) -> anyhow::Result<()> {
+        if let Some(idx) = self.list_state.selected() {
+            if idx < self.folders.len() {
+                let folder_id = self.folders[idx].id;
+                self.selected_folder = Some(folder_id);
+
+                let resources = {
+                    let client = client.lock();
+                    let rt = tokio::runtime::Runtime::new()?;
+                    rt.block_on(client.get_folder_resources(folder_id, 1))?
+                };
+
+                self.resources = resources.0;
+                self.list_state.select(Some(0));
+            }
+        }
+        Ok(())
+    }
+
+    fn play_selected(
+        &mut self,
+        client: Arc<Mutex<BilibiliClient>>,
+        player: &mut Option<AudioPlayer>,
+    ) -> anyhow::Result<()> {
+        let bvid = match self.current_tab {
+            LibraryTab::Favorites => {
+                if let Some(idx) = self.list_state.selected() {
+                    self.resources.get(idx).map(|r| r.bvid.clone())
+                } else {
+                    None
+                }
+            }
+            LibraryTab::WatchLater => {
+                if let Some(idx) = self.list_state.selected() {
+                    self.watch_later.get(idx).map(|w| w.bvid.clone())
+                } else {
+                    None
+                }
+            }
+            LibraryTab::History => {
+                if let Some(idx) = self.list_state.selected() {
+                    self.history.get(idx).and_then(|h| h.bvid.clone())
+                } else {
+                    None
+                }
+            }
+        };
+
+        if let Some(bvid) = bvid {
+            let (video_info, audio_stream) = {
+                let client = client.lock();
+                let rt = tokio::runtime::Runtime::new()?;
+
+                let video_info = rt.block_on(client.get_video_info(&bvid))?;
+                let cid = video_info.cid;
+
+                let audio_stream = rt.block_on(client.get_best_audio(&bvid, cid))?;
+
+                (video_info, audio_stream)
+            };
+
+            if player.is_none() {
+                *player = Some(AudioPlayer::new()?);
+            }
+
+            if let Some(p) = player {
+                p.play(&audio_stream.url)?;
+                eprintln!(
+                    "Now playing: {} by {}",
+                    video_info.title, video_info.owner.name
+                );
+            }
+        }
+
         Ok(())
     }
 

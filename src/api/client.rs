@@ -104,4 +104,10 @@ impl BilibiliClient {
         let response: ApiResponse<UserInfo> = self.get("/x/space/myinfo").await?;
         response.data.context("Failed to get user info")
     }
+
+    pub async fn get_video_info(&self, bvid: &str) -> Result<VideoInfo> {
+        let path = format!("/x/web-interface/view?bvid={}", bvid);
+        let response: ApiResponse<VideoInfo> = self.get(&path).await?;
+        response.data.context("Failed to get video info")
+    }
 }
