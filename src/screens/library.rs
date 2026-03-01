@@ -26,6 +26,7 @@ pub struct LibraryScreen {
     pub history: Vec<HistoryItem>,
     pub list_state: ListState,
     pub selected_folder: Option<u64>,
+    pub now_playing: Option<(String, String)>,
 }
 
 impl LibraryScreen {
@@ -38,6 +39,7 @@ impl LibraryScreen {
             history: Vec::new(),
             list_state: ListState::default(),
             selected_folder: None,
+            now_playing: None,
         }
     }
 
@@ -87,6 +89,7 @@ impl LibraryScreen {
             .constraints([
                 Constraint::Length(3),
                 Constraint::Min(10),
+                Constraint::Length(3),
                 Constraint::Length(3),
             ])
             .split(area);
@@ -158,9 +161,19 @@ impl LibraryScreen {
             .highlight_style(Style::default().bg(Color::DarkGray));
         f.render_stateful_widget(list, chunks[1], &mut self.list_state);
 
+        let now_playing_text = if let Some((title, artist)) = &self.now_playing {
+            format!("♫ Now Playing: {} - {}", title, artist)
+        } else {
+            "♫ Not Playing".to_string()
+        };
+        let now_playing = Paragraph::new(now_playing_text)
+            .style(Style::default().fg(Color::Cyan))
+            .block(Block::default().borders(Borders::TOP));
+        f.render_widget(now_playing, chunks[2]);
+
         let help = Paragraph::new("[j/k] Navigate  [Enter] Select  [Esc] Back  [d] Download  [Tab] Switch")
             .block(Block::default().borders(Borders::TOP));
-        f.render_widget(help, chunks[2]);
+        f.render_widget(help, chunks[3]);
     }
 
     pub fn next_item(&mut self) {
@@ -286,10 +299,7 @@ impl LibraryScreen {
 
             if let Some(p) = player {
                 p.play(&audio_stream.url)?;
-                eprintln!(
-                    "Now playing: {} by {}",
-                    video_info.title, video_info.owner.name
-                );
+                self.now_playing = Some((video_info.title, video_info.owner.name));
             }
         }
 

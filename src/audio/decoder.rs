@@ -4,13 +4,15 @@ use ffmpeg_next as ffmpeg;
 pub struct AudioDecoder {
     decoder: ffmpeg::decoder::Audio,
     resampler: ffmpeg::software::resampling::Context,
+    input: ffmpeg::format::context::Input,
+    stream_index: usize,
 }
 
 impl AudioDecoder {
     pub fn from_url(url: &str) -> Result<Self> {
         ffmpeg::init()?;
 
-        let mut ictx = ffmpeg::format::input(&url)
+        let ictx = ffmpeg::format::input(&url)
             .with_context(|| format!("Failed to open input: {}", url))?;
 
         let input = ictx
@@ -34,7 +36,12 @@ impl AudioDecoder {
             44100,
         )?;
 
-        Ok(Self { decoder, resampler })
+        Ok(Self {
+            decoder,
+            resampler,
+            input: ictx,
+            stream_index,
+        })
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -43,5 +50,44 @@ impl AudioDecoder {
 
     pub fn channels(&self) -> u16 {
         self.decoder.channels()
+    }
+
+    pub fn decode_next(&mut self) -> Result<Option<Vec<i16>>> {
+        for (stream, packet) in self.input.packets() {
+            if stream.index() == self.stream_index {
+                self.decoder.send_packet(&packet)?;
+
+                let mut decoded = ffmpeg::frame::Audio::empty();
+                while self.decoder.receive_frame(&mut decoded).is_ok() {
+                    let mut resampled = ffmpeg::frame::Audio::empty();
+                    self.resampler.run(&decoded, &mut resampled)?;
+
+                    let data = resampled.data(0);
+                    let samples: Vec<i16> = data
+                        .chunks_exact(2)
+                        .map(|chunk| i16::from_ne_bytes([chunk[0], chunk[1]]))
+                        .collect();
+
+                    return Ok(Some(samples));
+                }
+            }
+        }
+
+        self.decoder.send_eof()?;
+        let mut decoded = ffmpeg::frame::Audio::empty();
+        while self.decoder.receive_frame(&mut decoded).is_ok() {
+            let mut resampled = ffmpeg::frame::Audio::empty();
+            self.resampler.run(&decoded, &mut resampled)?;
+
+            let data = resampled.data(0);
+            let samples: Vec<i16> = data
+                .chunks_exact(2)
+                .map(|chunk| i16::from_ne_bytes([chunk[0], chunk[1]]))
+                .collect();
+
+            return Ok(Some(samples));
+        }
+
+        Ok(None)
     }
 }
