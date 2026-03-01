@@ -12,7 +12,10 @@ impl AudioDecoder {
     pub fn from_url(url: &str) -> Result<Self> {
         ffmpeg::init()?;
 
-        let ictx = ffmpeg::format::input(&url)
+        let mut options = ffmpeg::Dictionary::new();
+        options.set("headers", "Referer: https://www.bilibili.com\r\nUser-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36\r\n");
+
+        let ictx = ffmpeg::format::input_with_dictionary(&url, options)
             .with_context(|| format!("Failed to open input: {}", url))?;
 
         let input = ictx
