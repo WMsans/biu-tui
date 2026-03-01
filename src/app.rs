@@ -7,7 +7,7 @@ use crossterm::{
 use parking_lot::Mutex;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::api::BilibiliClient;
 use crate::audio::AudioPlayer;
@@ -28,6 +28,7 @@ pub struct App {
     player: Option<AudioPlayer>,
     downloader: Option<DownloadManager>,
     config: Config,
+    last_qr_poll: Option<Instant>,
 }
 
 impl App {
@@ -51,6 +52,7 @@ impl App {
             player: None,
             downloader: None,
             config,
+            last_qr_poll: None,
         })
     }
 
@@ -72,6 +74,8 @@ impl App {
                     self.handle_key(key.code, key.modifiers)?;
                 }
             }
+
+            self.poll_qr_login()?;
         }
 
         self.cleanup()?;
@@ -107,6 +111,117 @@ impl App {
                 _ => {}
             },
         }
+        Ok(())
+    }
+
+    fn poll_qr_login(&mut self) -> Result<()> {
+        if let Screen::Login(login) = &mut self.screen {
+            if let LoginState::QrWaiting { qrcode_data } = &login.state {
+                let should_poll = self
+                    .last_qr_poll
+                    .map(|last| last.elapsed() >= Duration::from_secs(2))
+                    .unwrap_or(true);
+
+                if should_poll {
+                    self.last_qr_poll = Some(Instant::now());
+
+                    let qrcode_key = qrcode_data.qrcode_key.clone();
+                    let poll_result = {
+                        let client = self.client.lock();
+                        let rt = tokio::runtime::Runtime::new()?;
+                        rt.block_on(client.poll_qrcode(&qrcode_key))
+                    };
+
+                    match poll_result {
+                        Ok(poll_data) => {
+                            eprintln!(
+                                "Poll result: code={}, message={}",
+                                poll_data.code, poll_data.message
+                            );
+                            match poll_data.code {
+                                0 => {
+                                    if let Some(url) = poll_data.url {
+                                        eprintln!("Login successful, URL: {}", url);
+                                        match self.handle_qr_login_success(&url) {
+                                            Ok(_) => {
+                                                if let Screen::Login(login) = &mut self.screen {
+                                                    login.state = LoginState::LoggedIn;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                if let Screen::Login(login) = &mut self.screen {
+                                                    login.state = LoginState::Error(format!(
+                                                        "Login failed: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                86038 => {
+                                    login.state = LoginState::QrScanned;
+                                }
+                                86090 => {
+                                    login.state = LoginState::Error(
+                                        "QR code expired. Press 'r' to refresh.".to_string(),
+                                    );
+                                }
+                                _ => {}
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Poll error: {:?}", e);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_qr_login_success(&mut self, url: &str) -> Result<()> {
+        let cookies = if url.contains('?') {
+            url.split('?')
+                .nth(1)
+                .unwrap_or("")
+                .split('&')
+                .filter(|s| {
+                    s.starts_with("DedeUserID=")
+                        || s.starts_with("SESSDATA=")
+                        || s.starts_with("bili_jct=")
+                        || s.starts_with("DedeUserID__ckMd5=")
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        } else {
+            url.split('&')
+                .filter(|s| {
+                    s.starts_with("DedeUserID=")
+                        || s.starts_with("SESSDATA=")
+                        || s.starts_with("bili_jct=")
+                        || s.starts_with("DedeUserID__ckMd5=")
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        };
+
+        if cookies.is_empty() {
+            anyhow::bail!("No cookies found in login URL");
+        }
+
+        crate::storage::CookieStorage::save(&cookies)?;
+
+        if let Some(csrf) = cookies
+            .split(';')
+            .find(|s| s.trim().starts_with("bili_jct="))
+            .and_then(|s| s.split('=').nth(1))
+            .map(|s| s.trim().to_string())
+        {
+            let mut client = self.client.lock();
+            client.set_csrf(csrf);
+        }
+
         Ok(())
     }
 
