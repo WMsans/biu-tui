@@ -10,6 +10,7 @@ pub struct ApiResponse<T> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserInfo {
     pub mid: u64,
+    #[serde(rename = "name")]
     pub uname: String,
     pub face: Option<String>,
 }

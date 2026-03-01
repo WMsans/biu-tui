@@ -13,7 +13,7 @@ use crate::api::BilibiliClient;
 use crate::audio::AudioPlayer;
 use crate::download::DownloadManager;
 use crate::screens::{LibraryScreen, LibraryTab, LoginScreen, LoginState};
-use crate::storage::Config;
+use crate::storage::{Config, CookieStorage};
 
 pub enum Screen {
     Login(LoginScreen),
@@ -39,10 +39,25 @@ impl App {
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
 
-        let client = Arc::new(Mutex::new(BilibiliClient::new()?));
+        let mut client = BilibiliClient::new()?;
         let config = Config::load().unwrap_or_default();
 
-        let screen = Screen::Login(LoginScreen::new());
+        let has_session = Self::try_restore_session(&mut client).unwrap_or(false);
+
+        let client = Arc::new(Mutex::new(client));
+
+        let screen = if has_session {
+            let mut library = LibraryScreen::new();
+            let rt = tokio::runtime::Runtime::new()?;
+            if let Err(e) = rt.block_on(library.load_data(client.clone())) {
+                eprintln!("Failed to load library data: {}", e);
+                Screen::Login(LoginScreen::new())
+            } else {
+                Screen::Library(library)
+            }
+        } else {
+            Screen::Login(LoginScreen::new())
+        };
 
         Ok(Self {
             terminal,
@@ -54,6 +69,28 @@ impl App {
             config,
             last_qr_poll: None,
         })
+    }
+
+    fn try_restore_session(client: &mut BilibiliClient) -> Result<bool> {
+        let cookies = match CookieStorage::load()? {
+            Some(c) => c,
+            None => return Ok(false),
+        };
+
+        if cookies.is_empty() {
+            return Ok(false);
+        }
+
+        client.load_cookies(&cookies)?;
+
+        let rt = tokio::runtime::Runtime::new()?;
+        match rt.block_on(client.get_user_info()) {
+            Ok(_) => Ok(true),
+            Err(_) => {
+                let _ = CookieStorage::clear();
+                Ok(false)
+            }
+        }
     }
 
     pub fn run(&mut self) -> Result<()> {

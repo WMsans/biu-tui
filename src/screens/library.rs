@@ -45,16 +45,29 @@ impl LibraryScreen {
             let client = client.lock();
             let mid = client.mid;
             
+            let folders_result = async {
+                if let Some(mid) = mid {
+                    client.get_created_folders(mid).await
+                        .map_err(|e| anyhow::anyhow!("Favorites API failed: {}", e))
+                } else {
+                    Ok(Vec::new())
+                }
+            };
+            
+            let watch_later_result = async {
+                client.get_watch_later().await
+                    .map_err(|e| anyhow::anyhow!("Watch Later API failed: {}", e))
+            };
+            
+            let history_result = async {
+                client.get_history(1).await
+                    .map_err(|e| anyhow::anyhow!("History API failed: {}", e))
+            };
+            
             let (folders, watch_later, history) = tokio::try_join!(
-                async {
-                    if let Some(mid) = mid {
-                        client.get_created_folders(mid).await
-                    } else {
-                        Ok(Vec::new())
-                    }
-                },
-                client.get_watch_later(),
-                client.get_history(1)
+                folders_result,
+                watch_later_result,
+                history_result
             )?;
             
             (folders, watch_later, history)
@@ -130,7 +143,10 @@ impl LibraryScreen {
                     ListItem::new(format!(
                         "{} - {}",
                         h.title,
-                        h.author_name.as_deref().unwrap_or("Unknown")
+                        h.owner
+                            .as_ref()
+                            .map(|o| o.name.as_str())
+                            .unwrap_or("Unknown")
                     ))
                 })
                 .collect(),
