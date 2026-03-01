@@ -5,6 +5,7 @@ pub mod history;
 pub mod player;
 pub mod types;
 
+pub use auth::QrCodeData;
 pub use client::BilibiliClient;
 pub use types::*;
 pub use history::{HistoryItem, WatchLaterItem, Owner};
