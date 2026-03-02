@@ -322,7 +322,9 @@ impl LibraryScreen {
             .block(Block::default().borders(Borders::TOP));
         f.render_widget(progress_bar, chunks[4]);
 
-        let help = Paragraph::new("[j/k] Navigate  [Enter] Select  [Esc] Back  [s] Settings  [Tab] Switch")
+        let help = Paragraph::new(
+            "[j/k] Navigate  [Enter] Select  [Esc] Back  [s] Settings  [a] Add to list  [A] Add all  [Tab] Switch"
+        )
             .block(Block::default().borders(Borders::TOP));
         f.render_widget(help, chunks[5]);
     }
@@ -633,6 +635,48 @@ impl LibraryScreen {
         };
         
         playing_list.lock().add(item);
+        
+        Ok(())
+    }
+
+    pub fn add_all_to_playing_list(
+        &self,
+        playing_list: Arc<Mutex<PlayingListManager>>,
+        client: Arc<Mutex<BilibiliClient>>,
+    ) -> anyhow::Result<()> {
+        let items: Option<Vec<PlaylistItem>> = match self.current_tab {
+            LibraryTab::Favorites => {
+                if let NavigationLevel::Videos { .. } = &self.nav_level {
+                    let mut items = Vec::new();
+                    for resource in &self.resources {
+                        let cid = {
+                            let client = client.lock();
+                            let rt = tokio::runtime::Runtime::new()?;
+                            let video_info = rt.block_on(client.get_video_info(&resource.bvid))?;
+                            video_info.cid
+                        };
+                        
+                        items.push(PlaylistItem {
+                            bvid: resource.bvid.clone(),
+                            cid,
+                            title: resource.title.clone(),
+                            artist: resource.upper.name.clone(),
+                            duration: resource.duration,
+                        });
+                    }
+                    Some(items)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        
+        if let Some(items) = items {
+            if !items.is_empty() {
+                playing_list.lock().add_all(items);
+            }
+        }
         
         Ok(())
     }

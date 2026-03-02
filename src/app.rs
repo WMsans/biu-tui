@@ -183,6 +183,13 @@ impl App {
                         eprintln!("Failed to add to playing list: {}", e);
                     }
                 }
+                KeyCode::Char('A') => {
+                    if let Err(e) = library
+                        .add_all_to_playing_list(self.playing_list.clone(), self.client.clone())
+                    {
+                        eprintln!("Failed to add all to playing list: {}", e);
+                    }
+                }
                 KeyCode::Char('s') => {
                     self.previous_library = Some(library.clone());
                     let settings_screen = SettingsScreen::new(self.settings.clone());
