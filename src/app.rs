@@ -176,6 +176,13 @@ impl App {
                     self.apply_volume();
                 }
                 KeyCode::Esc | KeyCode::Backspace => library.go_back(),
+                KeyCode::Char('a') => {
+                    if let Err(e) =
+                        library.add_to_playing_list(self.playing_list.clone(), self.client.clone())
+                    {
+                        eprintln!("Failed to add to playing list: {}", e);
+                    }
+                }
                 KeyCode::Char('s') => {
                     self.previous_library = Some(library.clone());
                     let settings_screen = SettingsScreen::new(self.settings.clone());

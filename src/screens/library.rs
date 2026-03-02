@@ -1,7 +1,7 @@
 use crate::api::{BilibiliClient, HistoryItem, WatchLaterItem};
 use crate::api::{FavoriteFolder, FavoriteResource};
 use crate::audio::AudioPlayer;
-use crate::playing_list::PlayingListManager;
+use crate::playing_list::{PlayingListManager, PlaylistItem};
 use crate::storage::LoopMode;
 use parking_lot::Mutex;
 use ratatui::{
@@ -566,6 +566,74 @@ impl LibraryScreen {
             }
         }
 
+        Ok(())
+    }
+
+    pub fn add_to_playing_list(
+        &self,
+        playing_list: Arc<Mutex<PlayingListManager>>,
+        client: Arc<Mutex<BilibiliClient>>,
+    ) -> anyhow::Result<()> {
+        let Some((bvid, title, artist, duration)) = (match self.current_tab {
+            LibraryTab::Favorites => {
+                if let Some(idx) = self.list_state.selected() {
+                    if let NavigationLevel::Videos { .. } = &self.nav_level {
+                        self.resources.get(idx).map(|r| {
+                            (r.bvid.clone(), r.title.clone(), r.upper.name.clone(), r.duration)
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            LibraryTab::WatchLater => {
+                if let Some(idx) = self.list_state.selected() {
+                    self.watch_later.get(idx).map(|w| {
+                        (w.bvid.clone(), w.title.clone(), 
+                         w.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
+                         w.duration)
+                    })
+                } else {
+                    None
+                }
+            }
+            LibraryTab::History => {
+                if let Some(idx) = self.list_state.selected() {
+                    self.history.get(idx).and_then(|h| {
+                        h.bvid.as_ref().map(|bvid| {
+                            (bvid.clone(), h.title.clone(),
+                             h.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
+                             h.duration)
+                        })
+                    })
+                } else {
+                    None
+                }
+            }
+            LibraryTab::PlayingList => None,
+        }) else {
+            return Ok(());
+        };
+        
+        let cid = {
+            let client = client.lock();
+            let rt = tokio::runtime::Runtime::new()?;
+            let video_info = rt.block_on(client.get_video_info(&bvid))?;
+            video_info.cid
+        };
+        
+        let item = PlaylistItem {
+            bvid,
+            cid,
+            title,
+            artist,
+            duration,
+        };
+        
+        playing_list.lock().add(item);
+        
         Ok(())
     }
 
