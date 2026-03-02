@@ -99,9 +99,11 @@ impl LibraryScreen {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3),
+                Constraint::Length(1),
                 Constraint::Min(10),
-                Constraint::Length(3),
-                Constraint::Length(3),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
             ])
             .split(area);
 
@@ -112,6 +114,19 @@ impl LibraryScreen {
             .style(Style::default())
             .highlight_style(Style::default().fg(Color::Cyan));
         f.render_widget(tabs, chunks[0]);
+
+        let breadcrumb_text = match &self.nav_level {
+            NavigationLevel::Folders => "Favorites".to_string(),
+            NavigationLevel::Videos { folder_title, .. } => {
+                format!("Favorites > {}", folder_title)
+            }
+            NavigationLevel::Episodes { folder_id_title, video_title, .. } => {
+                format!("Favorites > {} > {}", folder_id_title, video_title)
+            }
+        };
+        let breadcrumb = Paragraph::new(breadcrumb_text)
+            .style(Style::default().fg(Color::Yellow));
+        f.render_widget(breadcrumb, chunks[1]);
 
         let items: Vec<ListItem> = match self.current_tab {
             LibraryTab::Favorites => {
@@ -170,7 +185,7 @@ impl LibraryScreen {
         let list = List::new(items)
             .block(Block::default().borders(Borders::ALL))
             .highlight_style(Style::default().bg(Color::DarkGray));
-        f.render_stateful_widget(list, chunks[1], &mut self.list_state);
+        f.render_stateful_widget(list, chunks[2], &mut self.list_state);
 
         let now_playing_text = if let Some((title, artist)) = &self.now_playing {
             format!("♫ Now Playing: {} - {}", title, artist)
@@ -180,11 +195,11 @@ impl LibraryScreen {
         let now_playing = Paragraph::new(now_playing_text)
             .style(Style::default().fg(Color::Cyan))
             .block(Block::default().borders(Borders::TOP));
-        f.render_widget(now_playing, chunks[2]);
+        f.render_widget(now_playing, chunks[3]);
 
         let help = Paragraph::new("[j/k] Navigate  [Enter] Select  [Esc] Back  [d] Download  [Tab] Switch")
             .block(Block::default().borders(Borders::TOP));
-        f.render_widget(help, chunks[3]);
+        f.render_widget(help, chunks[5]);
     }
 
     pub fn next_item(&mut self) {
@@ -343,4 +358,11 @@ fn format_duration(seconds: u32) -> String {
     let mins = seconds / 60;
     let secs = seconds % 60;
     format!("{}:{:02}", mins, secs)
+}
+
+fn format_time(duration: std::time::Duration) -> String {
+    let total_secs = duration.as_secs();
+    let mins = total_secs / 60;
+    let secs = total_secs % 60;
+    format!("{:02}:{:02}", mins, secs)
 }
