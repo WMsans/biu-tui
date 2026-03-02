@@ -115,44 +115,35 @@ impl LibraryScreen {
         }
     }
 
-    #[allow(clippy::await_holding_lock)]
-    pub async fn load_data(&mut self, client: Arc<Mutex<BilibiliClient>>) -> anyhow::Result<()> {
+    /// Loads favorites, watch later, and history data from the Bilibili API.
+    ///
+    /// Each API call locks the client, runs the request to completion, and
+    /// releases the lock before the next call. This avoids the deadlock that
+    /// occurred when `try_join!` interleaved futures that each held a
+    /// `parking_lot::Mutex` guard across `.await` points.
+    pub fn load_data(&mut self, client: Arc<Mutex<BilibiliClient>>) -> anyhow::Result<()> {
+        let rt = tokio::runtime::Runtime::new()?;
         let mid = { client.lock().mid };
 
-        let client1 = client.clone();
-        let client2 = client.clone();
-        let client3 = client.clone();
-
-        let folders_result = async move {
-            if let Some(mid) = mid {
-                client1
-                    .lock()
-                    .get_created_folders(mid)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Favorites API failed: {}", e))
-            } else {
-                Ok(Vec::new())
-            }
+        let folders = if let Some(mid) = mid {
+            let c = client.lock();
+            rt.block_on(c.get_created_folders(mid))
+                .map_err(|e| anyhow::anyhow!("Favorites API failed: {}", e))?
+        } else {
+            Vec::new()
         };
 
-        let watch_later_result = async move {
-            client2
-                .lock()
-                .get_watch_later()
-                .await
-                .map_err(|e| anyhow::anyhow!("Watch Later API failed: {}", e))
+        let watch_later = {
+            let c = client.lock();
+            rt.block_on(c.get_watch_later())
+                .map_err(|e| anyhow::anyhow!("Watch Later API failed: {}", e))?
         };
 
-        let history_result = async move {
-            client3
-                .lock()
-                .get_history(1)
-                .await
-                .map_err(|e| anyhow::anyhow!("History API failed: {}", e))
+        let history = {
+            let c = client.lock();
+            rt.block_on(c.get_history(1))
+                .map_err(|e| anyhow::anyhow!("History API failed: {}", e))?
         };
-
-        let (folders, watch_later, history) =
-            tokio::try_join!(folders_result, watch_later_result, history_result)?;
 
         self.folders = folders;
         self.watch_later = watch_later;

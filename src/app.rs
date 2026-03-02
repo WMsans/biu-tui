@@ -85,8 +85,7 @@ impl App {
         let screen = if has_session {
             let mut library = LibraryScreen::new();
             library.set_loop_mode(settings.loop_mode);
-            let rt = tokio::runtime::Runtime::new()?;
-            if let Err(e) = rt.block_on(library.load_data(client.clone())) {
+            if let Err(e) = library.load_data(client.clone()) {
                 eprintln!("Failed to load library data: {}", e);
                 Screen::Login(LoginScreen::new())
             } else {
@@ -153,6 +152,12 @@ impl App {
 
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        self.running = false;
+                        continue;
+                    }
                     self.handle_key(key.code, key.modifiers)?;
                 }
             }
@@ -456,15 +461,13 @@ impl App {
 
     fn load_library_data(&mut self) -> Result<()> {
         if let Screen::Library(library) = &mut self.screen {
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(library.load_data(self.client.clone()))?;
+            library.load_data(self.client.clone())?;
         }
         Ok(())
     }
 
     fn load_library_data_into(&mut self, library: &mut LibraryScreen) -> Result<()> {
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(library.load_data(self.client.clone()))?;
+        library.load_data(self.client.clone())?;
         Ok(())
     }
 
