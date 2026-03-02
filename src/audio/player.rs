@@ -206,8 +206,10 @@ impl AudioPlayer {
     pub fn stop(&mut self) {
         *self.state.lock() = PlayerState::Stopped;
         self._stream = None;
+        if let Some(thread) = self._decoder_thread.take() {
+            let _ = thread.join();
+        }
         self.audio_buffer.lock().clear();
-        self._decoder_thread = None;
     }
 
     pub fn seek(&self, _position: Duration) {
