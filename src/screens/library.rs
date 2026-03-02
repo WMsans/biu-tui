@@ -1,6 +1,7 @@
 use crate::api::{BilibiliClient, HistoryItem, WatchLaterItem};
 use crate::api::{FavoriteFolder, FavoriteResource};
 use crate::audio::AudioPlayer;
+use crate::storage::LoopMode;
 use parking_lot::Mutex;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -24,6 +25,11 @@ pub enum NavigationLevel {
     Episodes { folder_id: u64, folder_id_title: String, bvid: String, video_title: String },
 }
 
+pub enum NextAction {
+    ReplayCurrent,
+    PlayNext(usize),
+}
+
 #[derive(Clone)]
 pub struct LibraryScreen {
     pub current_tab: LibraryTab,
@@ -36,6 +42,7 @@ pub struct LibraryScreen {
     pub nav_level: NavigationLevel,
     pub now_playing: Option<(String, String)>,
     pub current_video_info: Option<crate::api::VideoInfo>,
+    pub loop_mode: LoopMode,
 }
 
 impl LibraryScreen {
@@ -51,6 +58,38 @@ impl LibraryScreen {
             nav_level: NavigationLevel::Folders,
             now_playing: None,
             current_video_info: None,
+            loop_mode: LoopMode::default(),
+        }
+    }
+
+    pub fn set_loop_mode(&mut self, mode: LoopMode) {
+        self.loop_mode = mode;
+    }
+
+    pub fn get_next_action(&self) -> Option<NextAction> {
+        if self.resources.is_empty() {
+            return None;
+        }
+
+        let current_idx = self.list_state.selected()?;
+
+        match self.loop_mode {
+            LoopMode::LoopOne => Some(NextAction::ReplayCurrent),
+            LoopMode::NoLoop => {
+                if current_idx + 1 < self.resources.len() {
+                    Some(NextAction::PlayNext(current_idx + 1))
+                } else {
+                    None
+                }
+            }
+            LoopMode::LoopFolder => {
+                let next_idx = if current_idx + 1 < self.resources.len() {
+                    current_idx + 1
+                } else {
+                    0
+                };
+                Some(NextAction::PlayNext(next_idx))
+            }
         }
     }
 
