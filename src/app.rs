@@ -185,59 +185,70 @@ impl App {
                 }
                 _ => {}
             },
-            Screen::Library(library) => match code {
-                KeyCode::Char('q') => self.running = false,
-                KeyCode::Tab => {
-                    library.current_tab = match library.current_tab {
-                        LibraryTab::Favorites => LibraryTab::WatchLater,
-                        LibraryTab::WatchLater => LibraryTab::History,
-                        LibraryTab::History => LibraryTab::PlayingList,
-                        LibraryTab::PlayingList => LibraryTab::Favorites,
-                    };
-                }
-                KeyCode::Char('j') | KeyCode::Down => library.next_item(),
-                KeyCode::Char('k') | KeyCode::Up => library.prev_item(),
-                KeyCode::Enter => {
-                    if let Err(e) = library.handle_enter(
-                        self.client.clone(),
-                        &mut self.player,
-                        self.playing_list.clone(),
-                    ) {
-                        eprintln!("Failed to handle enter: {}", e);
+            Screen::Library(library) => {
+                // Clear status message on any keypress
+                library.status_message = None;
+                match code {
+                    KeyCode::Char('q') => self.running = false,
+                    KeyCode::Tab => {
+                        library.current_tab = match library.current_tab {
+                            LibraryTab::Favorites => LibraryTab::WatchLater,
+                            LibraryTab::WatchLater => LibraryTab::History,
+                            LibraryTab::History => LibraryTab::PlayingList,
+                            LibraryTab::PlayingList => LibraryTab::Favorites,
+                        };
+                        library.reset_selection_for_tab(self.playing_list.clone());
                     }
-                    self.apply_volume();
-                }
-                KeyCode::Esc | KeyCode::Backspace => library.go_back(),
-                KeyCode::Char('a') => {
-                    if let Err(e) =
-                        library.add_to_playing_list(self.playing_list.clone(), self.client.clone())
-                    {
-                        eprintln!("Failed to add to playing list: {}", e);
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        library.next_item(&self.playing_list);
                     }
-                }
-                KeyCode::Char('A') => {
-                    if let Err(e) = library
-                        .add_all_to_playing_list(self.playing_list.clone(), self.client.clone())
-                    {
-                        eprintln!("Failed to add all to playing list: {}", e);
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        library.prev_item(&self.playing_list);
                     }
-                }
-                KeyCode::Char('d') => {
-                    if let Err(e) = library.handle_remove_song(
-                        self.playing_list.clone(),
-                        self.client.clone(),
-                        &mut self.player,
-                    ) {
-                        eprintln!("Failed to remove song: {}", e);
+                    KeyCode::Enter => {
+                        if let Err(e) = library.handle_enter(
+                            self.client.clone(),
+                            &mut self.player,
+                            self.playing_list.clone(),
+                        ) {
+                            eprintln!("Failed to handle enter: {}", e);
+                        }
+                        self.apply_volume();
                     }
+                    KeyCode::Esc | KeyCode::Backspace => library.go_back(),
+                    KeyCode::Char('a') => {
+                        if let Err(e) = library
+                            .add_to_playing_list(self.playing_list.clone(), self.client.clone())
+                        {
+                            library.status_message =
+                                Some(format!("Failed to add to playing list: {}", e));
+                        }
+                    }
+                    KeyCode::Char('A') => {
+                        if let Err(e) = library
+                            .add_all_to_playing_list(self.playing_list.clone(), self.client.clone())
+                        {
+                            library.status_message =
+                                Some(format!("Failed to add all to playing list: {}", e));
+                        }
+                    }
+                    KeyCode::Char('d') => {
+                        if let Err(e) = library.handle_remove_song(
+                            self.playing_list.clone(),
+                            self.client.clone(),
+                            &mut self.player,
+                        ) {
+                            eprintln!("Failed to remove song: {}", e);
+                        }
+                    }
+                    KeyCode::Char('s') => {
+                        self.previous_library = Some((**library).clone());
+                        let settings_screen = SettingsScreen::new(self.settings.clone());
+                        self.screen = Screen::Settings(settings_screen);
+                    }
+                    _ => {}
                 }
-                KeyCode::Char('s') => {
-                    self.previous_library = Some((**library).clone());
-                    let settings_screen = SettingsScreen::new(self.settings.clone());
-                    self.screen = Screen::Settings(settings_screen);
-                }
-                _ => {}
-            },
+            }
             Screen::Settings(settings_screen) => match code {
                 KeyCode::Char('q') => self.running = false,
                 KeyCode::Char('s') | KeyCode::Esc => {

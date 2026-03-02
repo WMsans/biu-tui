@@ -53,6 +53,7 @@ pub struct LibraryScreen {
     pub now_playing: Option<(String, String)>,
     pub current_video_info: Option<crate::api::VideoInfo>,
     pub loop_mode: LoopMode,
+    pub status_message: Option<String>,
 }
 
 impl Default for LibraryScreen {
@@ -75,11 +76,23 @@ impl LibraryScreen {
             now_playing: None,
             current_video_info: None,
             loop_mode: LoopMode::default(),
+            status_message: None,
         }
     }
 
     pub fn set_loop_mode(&mut self, mode: LoopMode) {
         self.loop_mode = mode;
+    }
+
+    /// Resets the list_state selection to the first item of the current tab.
+    /// Call this after switching tabs to avoid stale indices.
+    pub fn reset_selection_for_tab(&mut self, playing_list: Arc<Mutex<PlayingListManager>>) {
+        let len = self.current_list_len_with_playlist(&playing_list);
+        if len > 0 {
+            self.list_state.select(Some(0));
+        } else {
+            self.list_state.select(None);
+        }
     }
 
     pub fn get_next_action(&self) -> Option<NextAction> {
@@ -148,6 +161,11 @@ impl LibraryScreen {
         self.folders = folders;
         self.watch_later = watch_later;
         self.history = history;
+
+        // Initialize selection to the first item if data was loaded
+        if !self.folders.is_empty() {
+            self.list_state.select(Some(0));
+        }
 
         Ok(())
     }
@@ -331,20 +349,27 @@ impl LibraryScreen {
             .block(Block::default().borders(Borders::TOP));
         f.render_widget(progress_bar, chunks[4]);
 
-        let help_text = match self.current_tab {
-            LibraryTab::PlayingList => {
-                "[j/k] Navigate  [Enter] Jump  [d] Remove  [Tab] Switch"
-            }
-            _ => {
-                "[j/k] Navigate  [Enter] Select  [Esc] Back  [s] Settings  [a] Add to list  [A] Add all  [Tab] Switch"
-            }
+        let (help_text, help_style) = if let Some(msg) = &self.status_message {
+            (msg.clone(), Style::default().fg(Color::Green))
+        } else {
+            let text = match self.current_tab {
+                LibraryTab::PlayingList => {
+                    "[j/k] Navigate  [Enter] Jump  [d] Remove  [Tab] Switch"
+                }
+                _ => {
+                    "[j/k] Navigate  [Enter] Select  [Esc] Back  [s] Settings  [a] Add to list  [A] Add all  [Tab] Switch"
+                }
+            };
+            (text.to_string(), Style::default())
         };
-        let help = Paragraph::new(help_text).block(Block::default().borders(Borders::TOP));
+        let help = Paragraph::new(help_text)
+            .style(help_style)
+            .block(Block::default().borders(Borders::TOP));
         f.render_widget(help, chunks[5]);
     }
 
-    pub fn next_item(&mut self) {
-        let len = self.current_list_len();
+    pub fn next_item(&mut self, playing_list: &Arc<Mutex<PlayingListManager>>) {
+        let len = self.current_list_len_with_playlist(playing_list);
         if len > 0 {
             let i = self
                 .list_state
@@ -354,8 +379,8 @@ impl LibraryScreen {
         }
     }
 
-    pub fn prev_item(&mut self) {
-        let len = self.current_list_len();
+    pub fn prev_item(&mut self, playing_list: &Arc<Mutex<PlayingListManager>>) {
+        let len = self.current_list_len_with_playlist(playing_list);
         if len > 0 {
             let i = self
                 .list_state
@@ -365,7 +390,10 @@ impl LibraryScreen {
         }
     }
 
-    fn current_list_len(&self) -> usize {
+    fn current_list_len_with_playlist(
+        &self,
+        playing_list: &Arc<Mutex<PlayingListManager>>,
+    ) -> usize {
         match self.current_tab {
             LibraryTab::Favorites => match &self.nav_level {
                 NavigationLevel::Folders => self.folders.len(),
@@ -374,7 +402,7 @@ impl LibraryScreen {
             },
             LibraryTab::WatchLater => self.watch_later.len(),
             LibraryTab::History => self.history.len(),
-            LibraryTab::PlayingList => 0,
+            LibraryTab::PlayingList => playing_list.lock().items().len(),
         }
     }
 
@@ -634,61 +662,86 @@ impl LibraryScreen {
     }
 
     pub fn add_to_playing_list(
-        &self,
+        &mut self,
         playing_list: Arc<Mutex<PlayingListManager>>,
         client: Arc<Mutex<BilibiliClient>>,
     ) -> anyhow::Result<()> {
+        let idx = match self.list_state.selected() {
+            Some(idx) => idx,
+            None => {
+                self.status_message = Some("No item selected".to_string());
+                return Ok(());
+            }
+        };
+
+        // For Episodes, we already have the cid from the page data
+        if let LibraryTab::Favorites = self.current_tab {
+            if let NavigationLevel::Episodes { bvid, .. } = &self.nav_level {
+                if let Some(episode) = self.episodes.get(idx) {
+                    let artist = self
+                        .current_video_info
+                        .as_ref()
+                        .map(|v| v.owner.name.clone())
+                        .unwrap_or_default();
+                    let item = PlaylistItem {
+                        bvid: bvid.clone(),
+                        cid: episode.cid,
+                        title: episode.part.clone(),
+                        artist,
+                        duration: episode.duration,
+                    };
+                    let title = item.title.clone();
+                    playing_list.lock().add(item);
+                    self.status_message = Some(format!("Added: {}", title));
+                    return Ok(());
+                }
+                self.status_message = Some("No episode at this index".to_string());
+                return Ok(());
+            }
+        }
+
+        // For other cases, extract metadata and fetch CID from API
         let Some((bvid, title, artist, duration)) = (match self.current_tab {
-            LibraryTab::Favorites => {
-                if let Some(idx) = self.list_state.selected() {
-                    if let NavigationLevel::Videos { .. } = &self.nav_level {
-                        self.resources.get(idx).map(|r| {
-                            (
-                                r.bvid.clone(),
-                                r.title.clone(),
-                                r.upper.name.clone(),
-                                r.duration,
-                            )
-                        })
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+            LibraryTab::Favorites => match &self.nav_level {
+                NavigationLevel::Videos { .. } => self.resources.get(idx).map(|r| {
+                    (
+                        r.bvid.clone(),
+                        r.title.clone(),
+                        r.upper.name.clone(),
+                        r.duration,
+                    )
+                }),
+                NavigationLevel::Folders => {
+                    self.status_message =
+                        Some("Navigate into a folder first to add songs".to_string());
+                    return Ok(());
                 }
+                NavigationLevel::Episodes { .. } => unreachable!(), // handled above
+            },
+            LibraryTab::WatchLater => self.watch_later.get(idx).map(|w| {
+                (
+                    w.bvid.clone(),
+                    w.title.clone(),
+                    w.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
+                    w.duration,
+                )
+            }),
+            LibraryTab::History => self.history.get(idx).and_then(|h| {
+                h.bvid.as_ref().map(|bvid| {
+                    (
+                        bvid.clone(),
+                        h.title.clone(),
+                        h.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
+                        h.duration,
+                    )
+                })
+            }),
+            LibraryTab::PlayingList => {
+                self.status_message = Some("Already in playing list".to_string());
+                return Ok(());
             }
-            LibraryTab::WatchLater => {
-                if let Some(idx) = self.list_state.selected() {
-                    self.watch_later.get(idx).map(|w| {
-                        (
-                            w.bvid.clone(),
-                            w.title.clone(),
-                            w.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
-                            w.duration,
-                        )
-                    })
-                } else {
-                    None
-                }
-            }
-            LibraryTab::History => {
-                if let Some(idx) = self.list_state.selected() {
-                    self.history.get(idx).and_then(|h| {
-                        h.bvid.as_ref().map(|bvid| {
-                            (
-                                bvid.clone(),
-                                h.title.clone(),
-                                h.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
-                                h.duration,
-                            )
-                        })
-                    })
-                } else {
-                    None
-                }
-            }
-            LibraryTab::PlayingList => None,
         }) else {
+            self.status_message = Some("No valid item at this index".to_string());
             return Ok(());
         };
 
@@ -702,29 +755,31 @@ impl LibraryScreen {
         let item = PlaylistItem {
             bvid,
             cid,
-            title,
+            title: title.clone(),
             artist,
             duration,
         };
 
         playing_list.lock().add(item);
+        self.status_message = Some(format!("Added: {}", title));
 
         Ok(())
     }
 
     pub fn add_all_to_playing_list(
-        &self,
+        &mut self,
         playing_list: Arc<Mutex<PlayingListManager>>,
         client: Arc<Mutex<BilibiliClient>>,
     ) -> anyhow::Result<()> {
-        let items: Option<Vec<PlaylistItem>> = match self.current_tab {
-            LibraryTab::Favorites => {
-                if let NavigationLevel::Videos { .. } = &self.nav_level {
+        let rt = tokio::runtime::Runtime::new()?;
+
+        let items: Vec<PlaylistItem> = match self.current_tab {
+            LibraryTab::Favorites => match &self.nav_level {
+                NavigationLevel::Videos { .. } => {
                     let mut items = Vec::new();
                     for resource in &self.resources {
                         let cid = {
                             let client = client.lock();
-                            let rt = tokio::runtime::Runtime::new()?;
                             let video_info = rt.block_on(client.get_video_info(&resource.bvid))?;
                             video_info.cid
                         };
@@ -737,18 +792,81 @@ impl LibraryScreen {
                             duration: resource.duration,
                         });
                     }
-                    Some(items)
-                } else {
-                    None
+                    items
                 }
+                NavigationLevel::Episodes { bvid, .. } => {
+                    let artist = self
+                        .current_video_info
+                        .as_ref()
+                        .map(|v| v.owner.name.clone())
+                        .unwrap_or_default();
+                    self.episodes
+                        .iter()
+                        .map(|ep| PlaylistItem {
+                            bvid: bvid.clone(),
+                            cid: ep.cid,
+                            title: ep.part.clone(),
+                            artist: artist.clone(),
+                            duration: ep.duration,
+                        })
+                        .collect()
+                }
+                NavigationLevel::Folders => {
+                    self.status_message =
+                        Some("Navigate into a folder first to add songs".to_string());
+                    return Ok(());
+                }
+            },
+            LibraryTab::WatchLater => {
+                let mut items = Vec::new();
+                for w in &self.watch_later {
+                    let cid = {
+                        let client = client.lock();
+                        let video_info = rt.block_on(client.get_video_info(&w.bvid))?;
+                        video_info.cid
+                    };
+                    items.push(PlaylistItem {
+                        bvid: w.bvid.clone(),
+                        cid,
+                        title: w.title.clone(),
+                        artist: w.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
+                        duration: w.duration,
+                    });
+                }
+                items
             }
-            _ => None,
+            LibraryTab::History => {
+                let mut items = Vec::new();
+                for h in &self.history {
+                    if let Some(bvid) = &h.bvid {
+                        let cid = {
+                            let client = client.lock();
+                            let video_info = rt.block_on(client.get_video_info(bvid))?;
+                            video_info.cid
+                        };
+                        items.push(PlaylistItem {
+                            bvid: bvid.clone(),
+                            cid,
+                            title: h.title.clone(),
+                            artist: h.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
+                            duration: h.duration,
+                        });
+                    }
+                }
+                items
+            }
+            LibraryTab::PlayingList => {
+                self.status_message = Some("Already in playing list".to_string());
+                return Ok(());
+            }
         };
 
-        if let Some(items) = items {
-            if !items.is_empty() {
-                playing_list.lock().add_all(items);
-            }
+        let count = items.len();
+        if !items.is_empty() {
+            playing_list.lock().add_all(items);
+            self.status_message = Some(format!("Added {} songs to playing list", count));
+        } else {
+            self.status_message = Some("No songs to add".to_string());
         }
 
         Ok(())
