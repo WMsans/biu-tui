@@ -31,6 +31,7 @@ pub struct App {
     config: Config,
     last_qr_poll: Option<Instant>,
     settings: Settings,
+    previous_library: Option<LibraryScreen>,
 }
 
 impl App {
@@ -73,6 +74,7 @@ impl App {
             config,
             last_qr_poll: None,
             settings,
+            previous_library: None,
         })
     }
 
@@ -162,6 +164,7 @@ impl App {
                 }
                 KeyCode::Esc | KeyCode::Backspace => library.go_back(),
                 KeyCode::Char('s') => {
+                    self.previous_library = Some(library.clone());
                     let settings_screen = SettingsScreen::new(self.settings.clone());
                     self.screen = Screen::Settings(settings_screen);
                 }
@@ -170,12 +173,17 @@ impl App {
             Screen::Settings(settings_screen) => match code {
                 KeyCode::Char('q') => self.running = false,
                 KeyCode::Char('s') | KeyCode::Esc => {
-                    let mut library = LibraryScreen::new();
-                    library.set_loop_mode(self.settings.loop_mode);
-                    if let Err(e) = self.load_library_data_into(&mut library) {
-                        eprintln!("Failed to load library data: {}", e);
+                    if let Some(mut library) = self.previous_library.take() {
+                        library.set_loop_mode(self.settings.loop_mode);
+                        self.screen = Screen::Library(library);
+                    } else {
+                        let mut library = LibraryScreen::new();
+                        library.set_loop_mode(self.settings.loop_mode);
+                        if let Err(e) = self.load_library_data_into(&mut library) {
+                            eprintln!("Failed to load library data: {}", e);
+                        }
+                        self.screen = Screen::Library(library);
                     }
-                    self.screen = Screen::Library(library);
                 }
                 KeyCode::Char('j') | KeyCode::Down => settings_screen.next_item(),
                 KeyCode::Char('k') | KeyCode::Up => settings_screen.prev_item(),

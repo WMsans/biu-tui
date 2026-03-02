@@ -67,6 +67,12 @@ impl LibraryScreen {
     }
 
     pub fn get_next_action(&self) -> Option<NextAction> {
+        // TODO: This method is ready for use when song-end detection is implemented.
+        // Currently the audio player runs independently without notifying the app when
+        // playback completes. To wire up loop mode:
+        // 1. Detect when current track ends (poll player.is_finished() or add callback)
+        // 2. Call this method to determine next action based on loop_mode
+        // 3. Execute the returned NextAction (replay current or play next)
         if self.resources.is_empty() {
             return None;
         }
