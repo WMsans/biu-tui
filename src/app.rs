@@ -12,12 +12,13 @@ use std::time::{Duration, Instant};
 use crate::api::BilibiliClient;
 use crate::audio::AudioPlayer;
 use crate::download::DownloadManager;
-use crate::screens::{LibraryScreen, LibraryTab, LoginScreen, LoginState};
-use crate::storage::{Config, CookieStorage};
+use crate::screens::{LibraryScreen, LibraryTab, LoginScreen, LoginState, SettingsScreen};
+use crate::storage::{Config, CookieStorage, Settings};
 
 pub enum Screen {
     Login(LoginScreen),
     Library(LibraryScreen),
+    Settings(SettingsScreen),
 }
 
 pub struct App {
@@ -29,6 +30,7 @@ pub struct App {
     downloader: Option<DownloadManager>,
     config: Config,
     last_qr_poll: Option<Instant>,
+    settings: Settings,
 }
 
 impl App {
@@ -41,6 +43,7 @@ impl App {
 
         let mut client = BilibiliClient::new()?;
         let config = Config::load().unwrap_or_default();
+        let settings = Settings::load().unwrap_or_default();
 
         let has_session = Self::try_restore_session(&mut client).unwrap_or(false);
 
@@ -68,6 +71,7 @@ impl App {
             downloader: None,
             config,
             last_qr_poll: None,
+            settings,
         })
     }
 
@@ -102,6 +106,10 @@ impl App {
                     Screen::Library(library) => {
                         let mut lib = library.clone();
                         lib.render(f, area, self.player.as_ref());
+                    }
+                    Screen::Settings(settings_screen) => {
+                        let mut s = settings_screen.clone();
+                        s.render(f, area);
                     }
                 }
             })?;
@@ -151,6 +159,32 @@ impl App {
                     }
                 }
                 KeyCode::Esc | KeyCode::Backspace => library.go_back(),
+                KeyCode::Char('s') => {
+                    let settings_screen = SettingsScreen::new(self.settings.clone());
+                    self.screen = Screen::Settings(settings_screen);
+                }
+                _ => {}
+            },
+            Screen::Settings(settings_screen) => match code {
+                KeyCode::Char('q') => self.running = false,
+                KeyCode::Char('s') | KeyCode::Esc => {
+                    self.screen = Screen::Library(LibraryScreen::new());
+                    if let Err(e) = self.load_library_data() {
+                        eprintln!("Failed to load library data: {}", e);
+                    }
+                }
+                KeyCode::Char('j') | KeyCode::Down => settings_screen.next_item(),
+                KeyCode::Char('k') | KeyCode::Up => settings_screen.prev_item(),
+                KeyCode::Char('l') | KeyCode::Right => {
+                    settings_screen.adjust_up();
+                    self.settings = settings_screen.settings.clone();
+                    self.apply_volume();
+                }
+                KeyCode::Char('h') | KeyCode::Left => {
+                    settings_screen.adjust_down();
+                    self.settings = settings_screen.settings.clone();
+                    self.apply_volume();
+                }
                 _ => {}
             },
         }
@@ -187,11 +221,10 @@ impl App {
                                 if let Some(url) = poll_data.url {
                                     match self.handle_qr_login_success(&url) {
                                         Ok(_) => {
-                                            let mut library = LibraryScreen::new();
-                                            if let Err(e) = self.load_library_data(&mut library) {
+                                            self.screen = Screen::Library(LibraryScreen::new());
+                                            if let Err(e) = self.load_library_data() {
                                                 eprintln!("Failed to load library data: {}", e);
                                             }
-                                            self.screen = Screen::Library(library);
                                         }
                                         Err(e) => {
                                             if let Screen::Login(login) = &mut self.screen {
@@ -284,10 +317,18 @@ impl App {
         Ok(())
     }
 
-    fn load_library_data(&mut self, library: &mut LibraryScreen) -> Result<()> {
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(library.load_data(self.client.clone()))?;
+    fn load_library_data(&mut self) -> Result<()> {
+        if let Screen::Library(library) = &mut self.screen {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(library.load_data(self.client.clone()))?;
+        }
         Ok(())
+    }
+
+    fn apply_volume(&mut self) {
+        if let Some(player) = &self.player {
+            player.set_volume(self.settings.volume_float());
+        }
     }
 
     fn cleanup(&mut self) -> Result<()> {

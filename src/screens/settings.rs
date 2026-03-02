@@ -28,6 +28,7 @@ impl SettingItem {
     }
 }
 
+#[derive(Clone)]
 pub struct SettingsScreen {
     pub settings: Settings,
     pub list_state: ListState,
