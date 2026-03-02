@@ -37,6 +37,16 @@ impl PlayingListManager {
         Ok(manager)
     }
 
+    pub fn new_empty() -> Result<Self> {
+        let storage_path = crate::storage::Settings::settings_dir()?.join("playing_list.json");
+
+        Ok(Self {
+            items: Vec::new(),
+            current_index: None,
+            storage_path,
+        })
+    }
+
     fn load(&mut self) -> Result<()> {
         if !self.storage_path.exists() {
             return Ok(());

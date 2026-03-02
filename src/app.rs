@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use crate::api::BilibiliClient;
 use crate::audio::{AudioPlayer, PlayerState};
 use crate::download::DownloadManager;
+use crate::playing_list::PlayingListManager;
 use crate::screens::{
     LibraryScreen, LibraryTab, LoginScreen, LoginState, NextAction, SettingsScreen,
 };
@@ -33,6 +34,7 @@ pub struct App {
     config: Config,
     last_qr_poll: Option<Instant>,
     settings: Settings,
+    playing_list: Arc<Mutex<PlayingListManager>>,
     previous_library: Option<LibraryScreen>,
     previous_player_state: Option<PlayerState>,
 }
@@ -48,6 +50,10 @@ impl App {
         let mut client = BilibiliClient::new()?;
         let config = Config::load().unwrap_or_default();
         let settings = Settings::load().unwrap_or_default();
+        let playing_list = Arc::new(Mutex::new(PlayingListManager::new().unwrap_or_else(|e| {
+            eprintln!("Failed to load playing list: {}", e);
+            PlayingListManager::new_empty().unwrap()
+        })));
 
         let has_session = Self::try_restore_session(&mut client).unwrap_or(false);
 
@@ -77,6 +83,7 @@ impl App {
             config,
             last_qr_poll: None,
             settings,
+            playing_list,
             previous_library: None,
             previous_player_state: None,
         })
