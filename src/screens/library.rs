@@ -287,7 +287,7 @@ impl LibraryScreen {
             .block(Block::default().borders(Borders::TOP));
         f.render_widget(progress_bar, chunks[4]);
 
-        let help = Paragraph::new("[j/k] Navigate  [Enter] Select  [Esc] Back  [d] Download  [Tab] Switch")
+        let help = Paragraph::new("[j/k] Navigate  [Enter] Select  [Esc] Back  [s] Settings  [Tab] Switch")
             .block(Block::default().borders(Borders::TOP));
         f.render_widget(help, chunks[5]);
     }
