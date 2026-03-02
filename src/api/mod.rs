@@ -7,6 +7,6 @@ pub mod types;
 
 pub use auth::QrCodeData;
 pub use client::BilibiliClient;
+pub use history::{HistoryItem, Owner, WatchLaterItem};
+pub use player::{AudioQuality, AudioStream};
 pub use types::*;
-pub use history::{HistoryItem, WatchLaterItem, Owner};
-pub use player::{AudioStream, AudioQuality};

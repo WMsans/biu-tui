@@ -1,5 +1,5 @@
+use crate::api::{ApiResponse, BilibiliClient};
 use anyhow::Result;
-use crate::api::{BilibiliClient, ApiResponse};
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct HistoryItem {
@@ -30,7 +30,9 @@ pub struct Owner {
 impl BilibiliClient {
     pub async fn get_history(&self, page: u32) -> Result<Vec<HistoryItem>> {
         let path = format!("/x/v2/history?ps=20&pn={}", page);
-        let response: ApiResponse<Vec<HistoryItem>> = self.get(&path).await
+        let response: ApiResponse<Vec<HistoryItem>> = self
+            .get(&path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to get history: {}", e))?;
 
         Ok(response.data.unwrap_or_default())
@@ -38,10 +40,13 @@ impl BilibiliClient {
 
     pub async fn get_watch_later(&self) -> Result<Vec<WatchLaterItem>> {
         let path = "/x/v2/history/toview";
-        let response: ApiResponse<serde_json::Value> = self.get(path).await
+        let response: ApiResponse<serde_json::Value> = self
+            .get(path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to get watch later: {}", e))?;
 
-        let items = response.data
+        let items = response
+            .data
             .and_then(|d| d.get("list").cloned())
             .and_then(|l| serde_json::from_value(l).ok())
             .unwrap_or_default();

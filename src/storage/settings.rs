@@ -2,9 +2,10 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum LoopMode {
     LoopOne,
+    #[default]
     NoLoop,
     LoopList,
 }
@@ -32,12 +33,6 @@ impl LoopMode {
             LoopMode::NoLoop => "No Loop",
             LoopMode::LoopList => "Loop List",
         }
-    }
-}
-
-impl Default for LoopMode {
-    fn default() -> Self {
-        LoopMode::NoLoop
     }
 }
 

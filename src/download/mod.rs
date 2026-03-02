@@ -2,4 +2,4 @@ pub mod extractor;
 pub mod manager;
 
 pub use extractor::AudioExtractor;
-pub use manager::{DownloadManager, DownloadTask, DownloadStatus};
+pub use manager::{DownloadManager, DownloadStatus, DownloadTask};

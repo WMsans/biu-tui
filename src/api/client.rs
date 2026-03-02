@@ -1,8 +1,8 @@
+use crate::api::types::*;
+use crate::api::UserInfo;
 use anyhow::{Context, Result};
 use reqwest::{cookie::Jar, Client};
 use std::sync::Arc;
-use crate::api::types::*;
-use crate::api::UserInfo;
 
 const BILIBILI_BASE_URL: &str = "https://api.bilibili.com";
 
@@ -32,11 +32,17 @@ impl BilibiliClient {
 
     pub fn load_cookies(&mut self, cookies: &str) -> Result<()> {
         let urls = vec![
-            "https://www.bilibili.com".parse().context("Failed to parse URL")?,
-            "https://api.bilibili.com".parse().context("Failed to parse URL")?,
-            "https://passport.bilibili.com".parse().context("Failed to parse URL")?,
+            "https://www.bilibili.com"
+                .parse()
+                .context("Failed to parse URL")?,
+            "https://api.bilibili.com"
+                .parse()
+                .context("Failed to parse URL")?,
+            "https://passport.bilibili.com"
+                .parse()
+                .context("Failed to parse URL")?,
         ];
-        
+
         // Split cookies and add each one individually to all relevant domains
         for cookie in cookies.split(';') {
             let cookie = cookie.trim();
@@ -79,25 +85,41 @@ impl BilibiliClient {
     pub async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<ApiResponse<T>> {
         let url = format!("{}{}", BILIBILI_BASE_URL, path);
         let response = self.client.get(&url).send().await?;
-        let response_text = response.text().await
+        let response_text = response
+            .text()
+            .await
             .context("Failed to read response text")?;
-        
-        serde_json::from_str(&response_text)
-            .with_context(|| format!("Failed to parse API response from {}: {}", path, response_text))
+
+        serde_json::from_str(&response_text).with_context(|| {
+            format!(
+                "Failed to parse API response from {}: {}",
+                path, response_text
+            )
+        })
     }
 
-    pub async fn post<T: serde::de::DeserializeOwned>(&self, path: &str, form: &[(&str, &str)]) -> Result<ApiResponse<T>> {
+    pub async fn post<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        form: &[(&str, &str)],
+    ) -> Result<ApiResponse<T>> {
         let url = format!("{}{}", BILIBILI_BASE_URL, path);
         let mut form_data = form.to_vec();
         if let Some(ref csrf) = self.csrf {
             form_data.push(("csrf", csrf.as_str()));
         }
         let response = self.client.post(&url).form(&form_data).send().await?;
-        let response_text = response.text().await
+        let response_text = response
+            .text()
+            .await
             .context("Failed to read response text")?;
-        
-        serde_json::from_str(&response_text)
-            .with_context(|| format!("Failed to parse API response from {}: {}", path, response_text))
+
+        serde_json::from_str(&response_text).with_context(|| {
+            format!(
+                "Failed to parse API response from {}: {}",
+                path, response_text
+            )
+        })
     }
 
     pub async fn get_user_info(&self) -> Result<UserInfo> {

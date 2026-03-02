@@ -23,8 +23,16 @@ pub enum LibraryTab {
 #[derive(Debug, Clone, PartialEq)]
 pub enum NavigationLevel {
     Folders,
-    Videos { folder_id: u64, folder_title: String },
-    Episodes { folder_id: u64, folder_id_title: String, bvid: String, video_title: String },
+    Videos {
+        folder_id: u64,
+        folder_title: String,
+    },
+    Episodes {
+        folder_id: u64,
+        folder_id_title: String,
+        bvid: String,
+        video_title: String,
+    },
 }
 
 pub enum NextAction {
@@ -45,6 +53,12 @@ pub struct LibraryScreen {
     pub now_playing: Option<(String, String)>,
     pub current_video_info: Option<crate::api::VideoInfo>,
     pub loop_mode: LoopMode,
+}
+
+impl Default for LibraryScreen {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LibraryScreen {
@@ -101,43 +115,49 @@ impl LibraryScreen {
         }
     }
 
+    #[allow(clippy::await_holding_lock)]
     pub async fn load_data(&mut self, client: Arc<Mutex<BilibiliClient>>) -> anyhow::Result<()> {
-        let (folders, watch_later, history) = {
-            let client = client.lock();
-            let mid = client.mid;
-            
-            let folders_result = async {
-                if let Some(mid) = mid {
-                    client.get_created_folders(mid).await
-                        .map_err(|e| anyhow::anyhow!("Favorites API failed: {}", e))
-                } else {
-                    Ok(Vec::new())
-                }
-            };
-            
-            let watch_later_result = async {
-                client.get_watch_later().await
-                    .map_err(|e| anyhow::anyhow!("Watch Later API failed: {}", e))
-            };
-            
-            let history_result = async {
-                client.get_history(1).await
-                    .map_err(|e| anyhow::anyhow!("History API failed: {}", e))
-            };
-            
-            let (folders, watch_later, history) = tokio::try_join!(
-                folders_result,
-                watch_later_result,
-                history_result
-            )?;
-            
-            (folders, watch_later, history)
+        let mid = { client.lock().mid };
+
+        let client1 = client.clone();
+        let client2 = client.clone();
+        let client3 = client.clone();
+
+        let folders_result = async move {
+            if let Some(mid) = mid {
+                client1
+                    .lock()
+                    .get_created_folders(mid)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Favorites API failed: {}", e))
+            } else {
+                Ok(Vec::new())
+            }
         };
+
+        let watch_later_result = async move {
+            client2
+                .lock()
+                .get_watch_later()
+                .await
+                .map_err(|e| anyhow::anyhow!("Watch Later API failed: {}", e))
+        };
+
+        let history_result = async move {
+            client3
+                .lock()
+                .get_history(1)
+                .await
+                .map_err(|e| anyhow::anyhow!("History API failed: {}", e))
+        };
+
+        let (folders, watch_later, history) =
+            tokio::try_join!(folders_result, watch_later_result, history_result)?;
 
         self.folders = folders;
         self.watch_later = watch_later;
         self.history = history;
-        
+
         Ok(())
     }
 
@@ -154,9 +174,9 @@ impl LibraryScreen {
                 Constraint::Length(3),
                 Constraint::Length(1),
                 Constraint::Min(10),
-                Constraint::Length(2),  // now playing: 1 for border + 1 for content
-                Constraint::Length(2),  // progress bar: 1 for border + 1 for content
-                Constraint::Length(2),  // help bar: 1 for border + 1 for content
+                Constraint::Length(2), // now playing: 1 for border + 1 for content
+                Constraint::Length(2), // progress bar: 1 for border + 1 for content
+                Constraint::Length(2), // help bar: 1 for border + 1 for content
             ])
             .split(area);
 
@@ -173,54 +193,52 @@ impl LibraryScreen {
             NavigationLevel::Videos { folder_title, .. } => {
                 format!("Favorites > {}", folder_title)
             }
-            NavigationLevel::Episodes { folder_id_title, video_title, .. } => {
+            NavigationLevel::Episodes {
+                folder_id_title,
+                video_title,
+                ..
+            } => {
                 format!("Favorites > {} > {}", folder_id_title, video_title)
             }
         };
-        let breadcrumb = Paragraph::new(breadcrumb_text)
-            .style(Style::default().fg(Color::Yellow));
+        let breadcrumb = Paragraph::new(breadcrumb_text).style(Style::default().fg(Color::Yellow));
         f.render_widget(breadcrumb, chunks[1]);
 
         let items: Vec<ListItem> = match self.current_tab {
-            LibraryTab::Favorites => {
-                match &self.nav_level {
-                    NavigationLevel::Folders => {
-                        self.folders
-                            .iter()
-                            .map(|f| ListItem::new(format!("{} ({})", f.title, f.media_count)))
-                            .collect()
-                    }
-                    NavigationLevel::Videos { .. } => {
-                        self.resources
-                            .iter()
-                            .map(|r| {
-                                let quality_badge = if r.duration > 300 { "[HQ]" } else { "" };
-                                ListItem::new(format!(
-                                    "{} {}  {}  {:->5}  {}",
-                                    r.bvid,
-                                    r.title,
-                                    r.upper.name,
-                                    format_duration(r.duration),
-                                    quality_badge
-                                ))
-                            })
-                            .collect()
-                    }
-                    NavigationLevel::Episodes { .. } => {
-                        self.episodes
-                            .iter()
-                            .map(|ep| {
-                                ListItem::new(format!(
-                                    "P{} {}  {}",
-                                    ep.page,
-                                    ep.part,
-                                    format_duration(ep.duration),
-                                ))
-                            })
-                            .collect()
-                    }
-                }
-            }
+            LibraryTab::Favorites => match &self.nav_level {
+                NavigationLevel::Folders => self
+                    .folders
+                    .iter()
+                    .map(|f| ListItem::new(format!("{} ({})", f.title, f.media_count)))
+                    .collect(),
+                NavigationLevel::Videos { .. } => self
+                    .resources
+                    .iter()
+                    .map(|r| {
+                        let quality_badge = if r.duration > 300 { "[HQ]" } else { "" };
+                        ListItem::new(format!(
+                            "{} {}  {}  {:->5}  {}",
+                            r.bvid,
+                            r.title,
+                            r.upper.name,
+                            format_duration(r.duration),
+                            quality_badge
+                        ))
+                    })
+                    .collect(),
+                NavigationLevel::Episodes { .. } => self
+                    .episodes
+                    .iter()
+                    .map(|ep| {
+                        ListItem::new(format!(
+                            "P{} {}  {}",
+                            ep.page,
+                            ep.part,
+                            format_duration(ep.duration),
+                        ))
+                    })
+                    .collect(),
+            },
             LibraryTab::WatchLater => self
                 .watch_later
                 .iter()
@@ -292,26 +310,26 @@ impl LibraryScreen {
             let dur = p.duration();
             let pos_str = format_time(pos);
             let dur_str = format_time(dur);
-            
+
             let progress = if dur.as_secs() > 0 {
                 pos.as_secs_f32() / dur.as_secs_f32()
             } else {
                 0.0
             };
-            
+
             let width = chunks[4].width as usize;
             let bar_width = width.saturating_sub(20);
             let filled = (bar_width as f32 * progress) as usize;
             let filled = filled.min(bar_width);
-            
+
             let bar: String = if bar_width > 0 {
-                let filled_chars: String = std::iter::repeat('━').take(filled).collect();
-                let empty_chars: String = std::iter::repeat('─').take(bar_width - filled).collect();
+                let filled_chars: String = std::iter::repeat_n('━', filled).collect();
+                let empty_chars: String = std::iter::repeat_n('─', bar_width - filled).collect();
                 format!("{}╾{}", filled_chars, empty_chars)
             } else {
                 String::new()
             };
-            
+
             format!("{}  {} / {}", bar, pos_str, dur_str)
         } else {
             "━━──────────────  --:-- / --:--".to_string()
@@ -330,8 +348,7 @@ impl LibraryScreen {
                 "[j/k] Navigate  [Enter] Select  [Esc] Back  [s] Settings  [a] Add to list  [A] Add all  [Tab] Switch"
             }
         };
-        let help = Paragraph::new(help_text)
-            .block(Block::default().borders(Borders::TOP));
+        let help = Paragraph::new(help_text).block(Block::default().borders(Borders::TOP));
         f.render_widget(help, chunks[5]);
     }
 
@@ -359,13 +376,11 @@ impl LibraryScreen {
 
     fn current_list_len(&self) -> usize {
         match self.current_tab {
-            LibraryTab::Favorites => {
-                match &self.nav_level {
-                    NavigationLevel::Folders => self.folders.len(),
-                    NavigationLevel::Videos { .. } => self.resources.len(),
-                    NavigationLevel::Episodes { .. } => self.episodes.len(),
-                }
-            }
+            LibraryTab::Favorites => match &self.nav_level {
+                NavigationLevel::Folders => self.folders.len(),
+                NavigationLevel::Videos { .. } => self.resources.len(),
+                NavigationLevel::Episodes { .. } => self.episodes.len(),
+            },
             LibraryTab::WatchLater => self.watch_later.len(),
             LibraryTab::History => self.history.len(),
             LibraryTab::PlayingList => 0,
@@ -421,22 +436,23 @@ impl LibraryScreen {
         playing_list: Arc<Mutex<PlayingListManager>>,
     ) -> anyhow::Result<()> {
         match self.current_tab {
-            LibraryTab::Favorites => {
-                match &self.nav_level {
-                    NavigationLevel::Folders => {
-                        self.select_folder(client)?;
-                    }
-                    NavigationLevel::Videos { folder_id, folder_title } => {
-                        let folder_id = *folder_id;
-                        let folder_title = folder_title.clone();
-                        self.select_video_or_episodes(client, player, folder_id, folder_title)?;
-                    }
-                    NavigationLevel::Episodes { bvid, .. } => {
-                        let bvid = bvid.clone();
-                        self.play_episode(client, player, &bvid)?;
-                    }
+            LibraryTab::Favorites => match &self.nav_level {
+                NavigationLevel::Folders => {
+                    self.select_folder(client)?;
                 }
-            }
+                NavigationLevel::Videos {
+                    folder_id,
+                    folder_title,
+                } => {
+                    let folder_id = *folder_id;
+                    let folder_title = folder_title.clone();
+                    self.select_video_or_episodes(client, player, folder_id, folder_title)?;
+                }
+                NavigationLevel::Episodes { bvid, .. } => {
+                    let bvid = bvid.clone();
+                    self.play_episode(client, player, &bvid)?;
+                }
+            },
             LibraryTab::WatchLater | LibraryTab::History => {
                 self.play_selected(client, player)?;
             }
@@ -461,7 +477,10 @@ impl LibraryScreen {
                 };
 
                 self.resources = resources.0;
-                self.nav_level = NavigationLevel::Videos { folder_id, folder_title };
+                self.nav_level = NavigationLevel::Videos {
+                    folder_id,
+                    folder_title,
+                };
                 self.list_state.select(Some(0));
             }
         }
@@ -633,7 +652,12 @@ impl LibraryScreen {
                 if let Some(idx) = self.list_state.selected() {
                     if let NavigationLevel::Videos { .. } = &self.nav_level {
                         self.resources.get(idx).map(|r| {
-                            (r.bvid.clone(), r.title.clone(), r.upper.name.clone(), r.duration)
+                            (
+                                r.bvid.clone(),
+                                r.title.clone(),
+                                r.upper.name.clone(),
+                                r.duration,
+                            )
                         })
                     } else {
                         None
@@ -645,9 +669,12 @@ impl LibraryScreen {
             LibraryTab::WatchLater => {
                 if let Some(idx) = self.list_state.selected() {
                     self.watch_later.get(idx).map(|w| {
-                        (w.bvid.clone(), w.title.clone(), 
-                         w.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
-                         w.duration)
+                        (
+                            w.bvid.clone(),
+                            w.title.clone(),
+                            w.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
+                            w.duration,
+                        )
                     })
                 } else {
                     None
@@ -657,9 +684,12 @@ impl LibraryScreen {
                 if let Some(idx) = self.list_state.selected() {
                     self.history.get(idx).and_then(|h| {
                         h.bvid.as_ref().map(|bvid| {
-                            (bvid.clone(), h.title.clone(),
-                             h.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
-                             h.duration)
+                            (
+                                bvid.clone(),
+                                h.title.clone(),
+                                h.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
+                                h.duration,
+                            )
                         })
                     })
                 } else {
@@ -670,14 +700,14 @@ impl LibraryScreen {
         }) else {
             return Ok(());
         };
-        
+
         let cid = {
             let client = client.lock();
             let rt = tokio::runtime::Runtime::new()?;
             let video_info = rt.block_on(client.get_video_info(&bvid))?;
             video_info.cid
         };
-        
+
         let item = PlaylistItem {
             bvid,
             cid,
@@ -685,9 +715,9 @@ impl LibraryScreen {
             artist,
             duration,
         };
-        
+
         playing_list.lock().add(item);
-        
+
         Ok(())
     }
 
@@ -707,7 +737,7 @@ impl LibraryScreen {
                             let video_info = rt.block_on(client.get_video_info(&resource.bvid))?;
                             video_info.cid
                         };
-                        
+
                         items.push(PlaylistItem {
                             bvid: resource.bvid.clone(),
                             cid,
@@ -723,13 +753,13 @@ impl LibraryScreen {
             }
             _ => None,
         };
-        
+
         if let Some(items) = items {
             if !items.is_empty() {
                 playing_list.lock().add_all(items);
             }
         }
-        
+
         Ok(())
     }
 
@@ -740,7 +770,11 @@ impl LibraryScreen {
                 self.resources.clear();
                 self.list_state.select(Some(0));
             }
-            NavigationLevel::Episodes { folder_id, folder_id_title, .. } => {
+            NavigationLevel::Episodes {
+                folder_id,
+                folder_id_title,
+                ..
+            } => {
                 self.nav_level = NavigationLevel::Videos {
                     folder_id: *folder_id,
                     folder_title: folder_id_title.clone(),

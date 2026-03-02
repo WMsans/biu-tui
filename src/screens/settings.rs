@@ -72,7 +72,7 @@ impl SettingsScreen {
         f.render_widget(help, chunks[2]);
     }
 
-    fn build_items(settings: &Settings) -> Vec<ListItem> {
+    fn build_items(settings: &Settings) -> Vec<ListItem<'_>> {
         let volume_text = format!(
             "Volume        {}  {:3}%",
             Self::format_volume_bar(settings.volume),
@@ -89,8 +89,8 @@ impl SettingsScreen {
         let filled = filled.min(bar_width);
         let empty = bar_width - filled;
 
-        let filled_chars: String = std::iter::repeat('█').take(filled).collect();
-        let empty_chars: String = std::iter::repeat('░').take(empty).collect();
+        let filled_chars: String = std::iter::repeat_n('█', filled).collect();
+        let empty_chars: String = std::iter::repeat_n('░', empty).collect();
         format!("{}{}", filled_chars, empty_chars)
     }
 

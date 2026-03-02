@@ -1,10 +1,10 @@
-use anyhow::{Context, Result};
+use super::extractor::AudioExtractor;
+use crate::storage::{Config, OutputFormat};
+use anyhow::Result;
+use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
-use parking_lot::Mutex;
-use crate::storage::{Config, OutputFormat};
-use super::extractor::AudioExtractor;
 
 #[derive(Debug, Clone)]
 pub struct DownloadTask {
@@ -66,7 +66,10 @@ impl DownloadManager {
         let task = {
             let mut queue = self.queue.lock();
             queue.front_mut().map(|t| {
-                t.status = DownloadStatus::Downloading { bytes_done: 0, total: 0 };
+                t.status = DownloadStatus::Downloading {
+                    bytes_done: 0,
+                    total: 0,
+                };
                 t.clone()
             })
         };
@@ -102,9 +105,17 @@ impl DownloadManager {
 
         let safe_title: String = title
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == ' ' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == ' ' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
 
-        self.config.download_dir.join(format!("{} - {}.{}", bvid, safe_title, ext))
+        self.config
+            .download_dir
+            .join(format!("{} - {}.{}", bvid, safe_title, ext))
     }
 }

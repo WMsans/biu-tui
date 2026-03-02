@@ -18,7 +18,7 @@ use crate::storage::{Config, CookieStorage, LoopMode, Settings};
 
 pub enum Screen {
     Login(LoginScreen),
-    Library(LibraryScreen),
+    Library(Box<LibraryScreen>),
     Settings(SettingsScreen),
 }
 
@@ -28,8 +28,8 @@ pub struct App {
     screen: Screen,
     client: Arc<Mutex<BilibiliClient>>,
     player: Option<AudioPlayer>,
-    downloader: Option<DownloadManager>,
-    config: Config,
+    _downloader: Option<DownloadManager>,
+    _config: Config,
     last_qr_poll: Option<Instant>,
     settings: Settings,
     playing_list: Arc<Mutex<PlayingListManager>>,
@@ -65,7 +65,7 @@ impl App {
                 eprintln!("Failed to load library data: {}", e);
                 Screen::Login(LoginScreen::new())
             } else {
-                Screen::Library(library)
+                Screen::Library(Box::new(library))
             }
         } else {
             Screen::Login(LoginScreen::new())
@@ -77,8 +77,8 @@ impl App {
             screen,
             client,
             player: None,
-            downloader: None,
-            config,
+            _downloader: None,
+            _config: config,
             last_qr_poll: None,
             settings,
             playing_list,
@@ -116,7 +116,7 @@ impl App {
                 match &self.screen {
                     Screen::Login(login) => login.render(f, area),
                     Screen::Library(library) => {
-                        let mut lib = library.clone();
+                        let mut lib = (*library).clone();
                         lib.render(f, area, self.player.as_ref(), self.playing_list.clone());
                     }
                     Screen::Settings(settings_screen) => {
@@ -202,7 +202,7 @@ impl App {
                     }
                 }
                 KeyCode::Char('s') => {
-                    self.previous_library = Some(library.clone());
+                    self.previous_library = Some((**library).clone());
                     let settings_screen = SettingsScreen::new(self.settings.clone());
                     self.screen = Screen::Settings(settings_screen);
                 }
@@ -213,14 +213,14 @@ impl App {
                 KeyCode::Char('s') | KeyCode::Esc => {
                     if let Some(mut library) = self.previous_library.take() {
                         library.set_loop_mode(self.settings.loop_mode);
-                        self.screen = Screen::Library(library);
+                        self.screen = Screen::Library(Box::new(library));
                     } else {
                         let mut library = LibraryScreen::new();
                         library.set_loop_mode(self.settings.loop_mode);
                         if let Err(e) = self.load_library_data_into(&mut library) {
                             eprintln!("Failed to load library data: {}", e);
                         }
-                        self.screen = Screen::Library(library);
+                        self.screen = Screen::Library(Box::new(library));
                     }
                 }
                 KeyCode::Char('j') | KeyCode::Down => settings_screen.next_item(),
@@ -265,15 +265,15 @@ impl App {
                         rt.block_on(client.poll_qrcode(&qrcode_key))
                     };
 
-                    match poll_result {
-                        Ok(poll_data) => match poll_data.code {
+                    if let Ok(poll_data) = poll_result {
+                        match poll_data.code {
                             0 => {
                                 if let Some(url) = poll_data.url {
                                     match self.handle_qr_login_success(&url) {
                                         Ok(_) => {
                                             let mut library = LibraryScreen::new();
                                             library.set_loop_mode(self.settings.loop_mode);
-                                            self.screen = Screen::Library(library);
+                                            self.screen = Screen::Library(Box::new(library));
                                             if let Err(e) = self.load_library_data() {
                                                 eprintln!("Failed to load library data: {}", e);
                                             }
@@ -305,8 +305,7 @@ impl App {
                                 }
                             }
                             _ => {}
-                        },
-                        Err(_) => {}
+                        }
                     }
                 }
             }
@@ -324,7 +323,7 @@ impl App {
             if was_playing && now_stopped {
                 let next_item = match self.settings.loop_mode {
                     LoopMode::LoopOne => self.playing_list.lock().current().cloned(),
-                    LoopMode::NoLoop => self.playing_list.lock().next().cloned(),
+                    LoopMode::NoLoop => self.playing_list.lock().advance_to_next().cloned(),
                     LoopMode::LoopList => {
                         let current = self.playing_list.lock().current_index();
                         let count = self.playing_list.lock().items().len();

@@ -142,7 +142,7 @@ impl PlayingListManager {
         self.current_index.and_then(|idx| self.items.get(idx))
     }
 
-    pub fn next(&mut self) -> Option<&PlaylistItem> {
+    pub fn advance_to_next(&mut self) -> Option<&PlaylistItem> {
         let current = self.current_index?;
 
         if current + 1 < self.items.len() {
@@ -265,7 +265,7 @@ mod tests {
         manager.add(create_test_item(2));
         manager.jump_to(1);
 
-        let result = manager.next();
+        let result = manager.advance_to_next();
 
         assert!(result.is_none());
         assert_eq!(manager.current_index(), Some(1));

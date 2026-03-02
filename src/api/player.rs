@@ -1,5 +1,5 @@
+use crate::api::{ApiResponse, AudioDash, BilibiliClient, PlayUrlData};
 use anyhow::{Context, Result};
-use crate::api::{BilibiliClient, ApiResponse, PlayUrlData, AudioDash};
 
 #[derive(Debug, Clone)]
 pub struct AudioStream {
@@ -40,7 +40,9 @@ impl BilibiliClient {
             }
 
             if let Some(audio) = best_audio {
-                let url = audio.base_url.clone()
+                let url = audio
+                    .base_url
+                    .clone()
                     .or_else(|| audio.backup_url.as_ref().and_then(|v| v.first().cloned()))
                     .context("No audio URL found")?;
 
@@ -55,7 +57,11 @@ impl BilibiliClient {
                 return Ok(AudioStream {
                     url,
                     quality,
-                    format: if audio.codecid == 0 { "mp4a".to_string() } else { "flac".to_string() },
+                    format: if audio.codecid == 0 {
+                        "mp4a".to_string()
+                    } else {
+                        "flac".to_string()
+                    },
                 });
             }
         }
