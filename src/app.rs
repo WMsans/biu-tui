@@ -12,11 +12,9 @@ use std::time::{Duration, Instant};
 use crate::api::BilibiliClient;
 use crate::audio::{AudioPlayer, PlayerState};
 use crate::download::DownloadManager;
-use crate::playing_list::PlayingListManager;
-use crate::screens::{
-    LibraryScreen, LibraryTab, LoginScreen, LoginState, NextAction, SettingsScreen,
-};
-use crate::storage::{Config, CookieStorage, Settings};
+use crate::playing_list::{PlayingListManager, PlaylistItem};
+use crate::screens::{LibraryScreen, LibraryTab, LoginScreen, LoginState, SettingsScreen};
+use crate::storage::{Config, CookieStorage, LoopMode, Settings};
 
 pub enum Screen {
     Login(LoginScreen),
@@ -317,30 +315,24 @@ impl App {
     }
 
     fn poll_playback_completion(&mut self) -> Result<()> {
-        if let Screen::Library(library) = &mut self.screen {
+        if let Screen::Library(_library) = &mut self.screen {
             let current_state = self.player.as_ref().map(|p| p.state());
 
             let was_playing = self.previous_player_state == Some(PlayerState::Playing);
             let now_stopped = current_state == Some(PlayerState::Stopped);
 
             if was_playing && now_stopped {
-                if let Some(next_action) = library.get_next_action() {
-                    match next_action {
-                        NextAction::ReplayCurrent => {
-                            self.replay_current()?;
-                        }
-                        NextAction::PlayNext(idx) => {
-                            library.list_state.select(Some(idx));
-                            if let Err(e) = library.handle_enter(
-                                self.client.clone(),
-                                &mut self.player,
-                                self.playing_list.clone(),
-                            ) {
-                                eprintln!("Failed to play next: {}", e);
-                            }
-                            self.apply_volume();
-                        }
+                let next_item = match self.settings.loop_mode {
+                    LoopMode::LoopOne => self.playing_list.lock().current().cloned(),
+                    LoopMode::NoLoop => self.playing_list.lock().next().cloned(),
+                    LoopMode::LoopList => {
+                        self.playing_list.lock().next();
+                        self.playing_list.lock().current().cloned()
                     }
+                };
+
+                if let Some(item) = next_item {
+                    self.play_playlist_item(&item)?;
                 }
             }
 
@@ -349,17 +341,25 @@ impl App {
         Ok(())
     }
 
-    fn replay_current(&mut self) -> Result<()> {
-        if let Screen::Library(library) = &mut self.screen {
-            if let Err(e) = library.handle_enter(
-                self.client.clone(),
-                &mut self.player,
-                self.playing_list.clone(),
-            ) {
-                eprintln!("Failed to replay: {}", e);
-            }
-            self.apply_volume();
+    fn play_playlist_item(&mut self, item: &PlaylistItem) -> Result<()> {
+        let audio_stream = {
+            let client = self.client.lock();
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(client.get_best_audio(&item.bvid, item.cid))?
+        };
+
+        if self.player.is_none() {
+            self.player = Some(AudioPlayer::new()?);
         }
+
+        if let Some(p) = &mut self.player {
+            p.play(&audio_stream.url)?;
+            if let Screen::Library(library) = &mut self.screen {
+                library.now_playing = Some((item.title.clone(), item.artist.clone()));
+            }
+        }
+
+        self.apply_volume();
         Ok(())
     }
 
