@@ -169,10 +169,12 @@ impl App {
             Screen::Settings(settings_screen) => match code {
                 KeyCode::Char('q') => self.running = false,
                 KeyCode::Char('s') | KeyCode::Esc => {
-                    self.screen = Screen::Library(LibraryScreen::new());
-                    if let Err(e) = self.load_library_data() {
+                    let mut library = LibraryScreen::new();
+                    library.set_loop_mode(self.settings.loop_mode);
+                    if let Err(e) = self.load_library_data_into(&mut library) {
                         eprintln!("Failed to load library data: {}", e);
                     }
+                    self.screen = Screen::Library(library);
                 }
                 KeyCode::Char('j') | KeyCode::Down => settings_screen.next_item(),
                 KeyCode::Char('k') | KeyCode::Up => settings_screen.prev_item(),
@@ -323,6 +325,12 @@ impl App {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(library.load_data(self.client.clone()))?;
         }
+        Ok(())
+    }
+
+    fn load_library_data_into(&mut self, library: &mut LibraryScreen) -> Result<()> {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(library.load_data(self.client.clone()))?;
         Ok(())
     }
 
