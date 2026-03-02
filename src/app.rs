@@ -163,7 +163,8 @@ impl App {
                     library.current_tab = match library.current_tab {
                         LibraryTab::Favorites => LibraryTab::WatchLater,
                         LibraryTab::WatchLater => LibraryTab::History,
-                        LibraryTab::History => LibraryTab::Favorites,
+                        LibraryTab::History => LibraryTab::PlayingList,
+                        LibraryTab::PlayingList => LibraryTab::Favorites,
                     };
                 }
                 KeyCode::Char('j') | KeyCode::Down => library.next_item(),

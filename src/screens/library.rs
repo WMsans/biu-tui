@@ -16,6 +16,7 @@ pub enum LibraryTab {
     Favorites,
     WatchLater,
     History,
+    PlayingList,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -152,7 +153,7 @@ impl LibraryScreen {
             ])
             .split(area);
 
-        let titles: Vec<&str> = vec!["Favorites", "Watch Later", "History"];
+        let titles: Vec<&str> = vec!["Favorites", "Watch Later", "History", "Playing List"];
         let tabs = Tabs::new(titles)
             .block(Block::default().borders(Borders::BOTTOM))
             .select(self.current_tab as usize)
@@ -241,6 +242,7 @@ impl LibraryScreen {
                     ))
                 })
                 .collect(),
+            LibraryTab::PlayingList => Vec::new(),
         };
 
         let list = List::new(items)
@@ -331,6 +333,7 @@ impl LibraryScreen {
             }
             LibraryTab::WatchLater => self.watch_later.len(),
             LibraryTab::History => self.history.len(),
+            LibraryTab::PlayingList => 0,
         }
     }
 
@@ -356,7 +359,7 @@ impl LibraryScreen {
                     }
                 }
             }
-            LibraryTab::WatchLater | LibraryTab::History => {
+            LibraryTab::WatchLater | LibraryTab::History | LibraryTab::PlayingList => {
                 self.play_selected(client, player)?;
             }
         }
@@ -510,6 +513,7 @@ impl LibraryScreen {
                     None
                 }
             }
+            LibraryTab::PlayingList => None,
         };
 
         if let Some(bvid) = bvid {
