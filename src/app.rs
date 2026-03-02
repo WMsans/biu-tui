@@ -326,8 +326,20 @@ impl App {
                     LoopMode::LoopOne => self.playing_list.lock().current().cloned(),
                     LoopMode::NoLoop => self.playing_list.lock().next().cloned(),
                     LoopMode::LoopList => {
-                        self.playing_list.lock().next();
-                        self.playing_list.lock().current().cloned()
+                        let current = self.playing_list.lock().current_index();
+                        let count = self.playing_list.lock().items().len();
+
+                        if count == 0 {
+                            None
+                        } else {
+                            let next_idx = match current {
+                                Some(idx) if idx + 1 < count => idx + 1,
+                                _ => 0,
+                            };
+
+                            self.playing_list.lock().jump_to(next_idx);
+                            self.playing_list.lock().current().cloned()
+                        }
                     }
                 };
 

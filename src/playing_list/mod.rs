@@ -148,7 +148,7 @@ impl PlayingListManager {
         if current + 1 < self.items.len() {
             self.current_index = Some(current + 1);
         } else {
-            self.current_index = Some(0);
+            return None;
         }
 
         let _ = self.save();
