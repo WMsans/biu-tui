@@ -4,33 +4,33 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LoopMode {
-    LoopFolder,
     LoopOne,
     NoLoop,
+    LoopList,
 }
 
 impl LoopMode {
     pub fn next(self) -> Self {
         match self {
-            LoopMode::LoopFolder => LoopMode::LoopOne,
             LoopMode::LoopOne => LoopMode::NoLoop,
-            LoopMode::NoLoop => LoopMode::LoopFolder,
+            LoopMode::NoLoop => LoopMode::LoopList,
+            LoopMode::LoopList => LoopMode::LoopOne,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            LoopMode::LoopFolder => LoopMode::NoLoop,
-            LoopMode::LoopOne => LoopMode::LoopFolder,
+            LoopMode::LoopOne => LoopMode::LoopList,
             LoopMode::NoLoop => LoopMode::LoopOne,
+            LoopMode::LoopList => LoopMode::NoLoop,
         }
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            LoopMode::LoopFolder => "Loop Folder",
             LoopMode::LoopOne => "Loop One",
             LoopMode::NoLoop => "No Loop",
+            LoopMode::LoopList => "Loop List",
         }
     }
 }

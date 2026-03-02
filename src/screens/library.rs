@@ -88,7 +88,7 @@ impl LibraryScreen {
                     None
                 }
             }
-            LoopMode::LoopFolder => {
+            LoopMode::LoopList => {
                 let next_idx = if current_idx + 1 < self.resources.len() {
                     current_idx + 1
                 } else {
