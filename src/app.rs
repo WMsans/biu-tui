@@ -101,7 +101,7 @@ impl App {
                     Screen::Login(login) => login.render(f, area),
                     Screen::Library(library) => {
                         let mut lib = library.clone();
-                        lib.render(f, area);
+                        lib.render(f, area, self.player.as_ref());
                     }
                 }
             })?;
