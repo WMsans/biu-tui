@@ -40,11 +40,36 @@ pub struct App {
 impl App {
     pub fn new() -> Result<Self> {
         enable_raw_mode()?;
-        let mut stdout = std::io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-        let backend = CrosstermBackend::new(stdout);
-        let terminal = Terminal::new(backend)?;
 
+        let mut stdout = std::io::stdout();
+        if let Err(e) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
+            let _ = disable_raw_mode();
+            return Err(e.into());
+        }
+
+        let backend = CrosstermBackend::new(stdout);
+        let terminal = match Terminal::new(backend) {
+            Ok(t) => t,
+            Err(e) => {
+                let _ = disable_raw_mode();
+                let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+                return Err(e.into());
+            }
+        };
+
+        let result = Self::init_app_state(terminal);
+
+        match result {
+            Ok(app) => Ok(app),
+            Err(e) => {
+                let _ = disable_raw_mode();
+                let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+                Err(e)
+            }
+        }
+    }
+
+    fn init_app_state(terminal: Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<Self> {
         let mut client = BilibiliClient::new()?;
         let config = Config::load().unwrap_or_default();
         let settings = Settings::load().unwrap_or_default();
