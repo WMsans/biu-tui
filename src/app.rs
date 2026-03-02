@@ -51,6 +51,7 @@ impl App {
 
         let screen = if has_session {
             let mut library = LibraryScreen::new();
+            library.set_loop_mode(settings.loop_mode);
             let rt = tokio::runtime::Runtime::new()?;
             if let Err(e) = rt.block_on(library.load_data(client.clone())) {
                 eprintln!("Failed to load library data: {}", e);
@@ -224,7 +225,9 @@ impl App {
                                 if let Some(url) = poll_data.url {
                                     match self.handle_qr_login_success(&url) {
                                         Ok(_) => {
-                                            self.screen = Screen::Library(LibraryScreen::new());
+                                            let mut library = LibraryScreen::new();
+                                            library.set_loop_mode(self.settings.loop_mode);
+                                            self.screen = Screen::Library(library);
                                             if let Err(e) = self.load_library_data() {
                                                 eprintln!("Failed to load library data: {}", e);
                                             }
