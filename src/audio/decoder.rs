@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use ffmpeg_next as ffmpeg;
+use std::time::Duration;
 
 pub struct AudioDecoder {
     decoder: ffmpeg::decoder::Audio,
@@ -63,6 +64,15 @@ impl AudioDecoder {
 
     pub fn channels(&self) -> u16 {
         self.decoder.channels()
+    }
+
+    pub fn duration(&self) -> Duration {
+        let duration_micros = self.input.duration();
+        if duration_micros > 0 {
+            Duration::from_micros(duration_micros as u64)
+        } else {
+            Duration::ZERO
+        }
     }
 
     pub fn decode_next(&mut self) -> Result<Option<Vec<i16>>> {

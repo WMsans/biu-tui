@@ -80,16 +80,31 @@ impl AudioPlayer {
         let audio_buffer = self.audio_buffer.clone();
         let state = self.state.clone();
         let url_owned = url.to_string();
+        let duration_arc = self.duration.clone();
+        let position_arc = self.position.clone();
 
         let decoder_thread = std::thread::spawn(move || {
             if let Ok(mut decoder) =
                 AudioDecoder::from_url_with_sample_rate(&url_owned, sample_rate)
             {
+                *duration_arc.lock() = decoder.duration();
+
+                let mut total_samples_decoded: u64 = 0;
+                let channels = decoder.channels() as u64;
+                let output_sample_rate = decoder.output_sample_rate() as u64;
+
                 let min_buffer_size = buffer_size / 3;
                 while *state.lock() == PlayerState::Playing {
                     match decoder.decode_next() {
                         Ok(Some(samples)) => {
-                            // Wait until there's room in the buffer instead of dropping samples
+                            total_samples_decoded += samples.len() as u64;
+
+                            if channels > 0 && output_sample_rate > 0 {
+                                let position_secs =
+                                    total_samples_decoded / channels / output_sample_rate;
+                                *position_arc.lock() = Duration::from_secs(position_secs);
+                            }
+
                             let mut offset = 0;
                             while offset < samples.len() {
                                 {
@@ -100,7 +115,6 @@ impl AudioPlayer {
                                     }
                                 }
                                 if offset < samples.len() {
-                                    // Buffer full — check if we should still be playing
                                     if *state.lock() != PlayerState::Playing {
                                         break;
                                     }
