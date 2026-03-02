@@ -157,6 +157,7 @@ impl App {
                     if let Err(e) = library.handle_enter(self.client.clone(), &mut self.player) {
                         eprintln!("Failed to handle enter: {}", e);
                     }
+                    self.apply_volume();
                 }
                 KeyCode::Esc | KeyCode::Backspace => library.go_back(),
                 KeyCode::Char('s') => {
