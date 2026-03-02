@@ -322,9 +322,15 @@ impl LibraryScreen {
             .block(Block::default().borders(Borders::TOP));
         f.render_widget(progress_bar, chunks[4]);
 
-        let help = Paragraph::new(
-            "[j/k] Navigate  [Enter] Select  [Esc] Back  [s] Settings  [a] Add to list  [A] Add all  [Tab] Switch"
-        )
+        let help_text = match self.current_tab {
+            LibraryTab::PlayingList => {
+                "[j/k] Navigate  [Enter] Jump  [d] Remove  [Tab] Switch"
+            }
+            _ => {
+                "[j/k] Navigate  [Enter] Select  [Esc] Back  [s] Settings  [a] Add to list  [A] Add all  [Tab] Switch"
+            }
+        };
+        let help = Paragraph::new(help_text)
             .block(Block::default().borders(Borders::TOP));
         f.render_widget(help, chunks[5]);
     }
@@ -744,6 +750,56 @@ impl LibraryScreen {
             }
             NavigationLevel::Folders => {}
         }
+    }
+
+    pub fn handle_remove_song(
+        &mut self,
+        playing_list: Arc<Mutex<PlayingListManager>>,
+        client: Arc<Mutex<BilibiliClient>>,
+        player: &mut Option<AudioPlayer>,
+    ) -> anyhow::Result<()> {
+        if self.current_tab != LibraryTab::PlayingList {
+            return Ok(());
+        }
+
+        let selected_idx = match self.list_state.selected() {
+            Some(idx) => idx,
+            None => return Ok(()),
+        };
+
+        let current_idx = playing_list.lock().current_index();
+        let is_current = current_idx == Some(selected_idx);
+
+        playing_list.lock().remove(selected_idx);
+
+        if is_current {
+            let next_item = playing_list.lock().current().cloned();
+
+            if let Some(item) = next_item {
+                let audio_stream = {
+                    let client = client.lock();
+                    let rt = tokio::runtime::Runtime::new()?;
+                    rt.block_on(client.get_best_audio(&item.bvid, item.cid))?
+                };
+
+                if let Some(p) = player {
+                    p.play(&audio_stream.url)?;
+                    self.now_playing = Some((item.title, item.artist));
+                }
+            } else {
+                if let Some(p) = player {
+                    p.stop();
+                }
+                self.now_playing = None;
+            }
+        }
+
+        let list_len = playing_list.lock().items().len();
+        if selected_idx >= list_len && list_len > 0 {
+            self.list_state.select(Some(list_len - 1));
+        }
+
+        Ok(())
     }
 }
 

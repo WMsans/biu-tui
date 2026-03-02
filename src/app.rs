@@ -194,6 +194,15 @@ impl App {
                         eprintln!("Failed to add all to playing list: {}", e);
                     }
                 }
+                KeyCode::Char('d') => {
+                    if let Err(e) = library.handle_remove_song(
+                        self.playing_list.clone(),
+                        self.client.clone(),
+                        &mut self.player,
+                    ) {
+                        eprintln!("Failed to remove song: {}", e);
+                    }
+                }
                 KeyCode::Char('s') => {
                     self.previous_library = Some(library.clone());
                     let settings_screen = SettingsScreen::new(self.settings.clone());
