@@ -17,16 +17,25 @@ pub enum LibraryTab {
     History,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum NavigationLevel {
+    Folders,
+    Videos { folder_id: u64, folder_title: String },
+    Episodes { folder_id: u64, folder_id_title: String, bvid: String, video_title: String },
+}
+
 #[derive(Clone)]
 pub struct LibraryScreen {
     pub current_tab: LibraryTab,
     pub folders: Vec<FavoriteFolder>,
     pub resources: Vec<FavoriteResource>,
+    pub episodes: Vec<crate::api::VideoPage>,
     pub watch_later: Vec<WatchLaterItem>,
     pub history: Vec<HistoryItem>,
     pub list_state: ListState,
-    pub selected_folder: Option<u64>,
+    pub nav_level: NavigationLevel,
     pub now_playing: Option<(String, String)>,
+    pub current_video_info: Option<crate::api::VideoInfo>,
 }
 
 impl LibraryScreen {
@@ -35,11 +44,13 @@ impl LibraryScreen {
             current_tab: LibraryTab::Favorites,
             folders: Vec::new(),
             resources: Vec::new(),
+            episodes: Vec::new(),
             watch_later: Vec::new(),
             history: Vec::new(),
             list_state: ListState::default(),
-            selected_folder: None,
+            nav_level: NavigationLevel::Folders,
             now_playing: None,
+            current_video_info: None,
         }
     }
 
@@ -104,7 +115,7 @@ impl LibraryScreen {
 
         let items: Vec<ListItem> = match self.current_tab {
             LibraryTab::Favorites => {
-                if self.selected_folder.is_some() {
+                if !matches!(self.nav_level, NavigationLevel::Folders) {
                     self.resources
                         .iter()
                         .map(|r| {
@@ -201,10 +212,10 @@ impl LibraryScreen {
     fn current_list_len(&self) -> usize {
         match self.current_tab {
             LibraryTab::Favorites => {
-                if self.selected_folder.is_some() {
-                    self.resources.len()
-                } else {
+                if matches!(self.nav_level, NavigationLevel::Folders) {
                     self.folders.len()
+                } else {
+                    self.resources.len()
                 }
             }
             LibraryTab::WatchLater => self.watch_later.len(),
@@ -219,7 +230,7 @@ impl LibraryScreen {
     ) -> anyhow::Result<()> {
         match self.current_tab {
             LibraryTab::Favorites => {
-                if self.selected_folder.is_none() {
+                if matches!(self.nav_level, NavigationLevel::Folders) {
                     self.select_folder(client)?;
                 } else {
                     self.play_selected(client, player)?;
@@ -235,8 +246,9 @@ impl LibraryScreen {
     fn select_folder(&mut self, client: Arc<Mutex<BilibiliClient>>) -> anyhow::Result<()> {
         if let Some(idx) = self.list_state.selected() {
             if idx < self.folders.len() {
-                let folder_id = self.folders[idx].id;
-                self.selected_folder = Some(folder_id);
+                let folder = &self.folders[idx];
+                let folder_id = folder.id;
+                let folder_title = folder.title.clone();
 
                 let resources = {
                     let client = client.lock();
@@ -245,6 +257,7 @@ impl LibraryScreen {
                 };
 
                 self.resources = resources.0;
+                self.nav_level = NavigationLevel::Videos { folder_id, folder_title };
                 self.list_state.select(Some(0));
             }
         }
@@ -307,10 +320,21 @@ impl LibraryScreen {
     }
 
     pub fn go_back(&mut self) {
-        if self.selected_folder.is_some() {
-            self.selected_folder = None;
-            self.resources.clear();
-            self.list_state.select(Some(0));
+        match &self.nav_level {
+            NavigationLevel::Videos { .. } => {
+                self.nav_level = NavigationLevel::Folders;
+                self.resources.clear();
+                self.list_state.select(Some(0));
+            }
+            NavigationLevel::Episodes { folder_id, folder_id_title, .. } => {
+                self.nav_level = NavigationLevel::Videos {
+                    folder_id: *folder_id,
+                    folder_title: folder_id_title.clone(),
+                };
+                self.episodes.clear();
+                self.list_state.select(Some(0));
+            }
+            NavigationLevel::Folders => {}
         }
     }
 }
