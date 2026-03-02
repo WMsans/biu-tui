@@ -1,6 +1,7 @@
 use crate::api::{BilibiliClient, HistoryItem, WatchLaterItem};
 use crate::api::{FavoriteFolder, FavoriteResource};
 use crate::audio::AudioPlayer;
+use crate::playing_list::PlayingListManager;
 use crate::storage::LoopMode;
 use parking_lot::Mutex;
 use ratatui::{
@@ -140,7 +141,13 @@ impl LibraryScreen {
         Ok(())
     }
 
-    pub fn render(&mut self, f: &mut Frame, area: Rect, player: Option<&AudioPlayer>) {
+    pub fn render(
+        &mut self,
+        f: &mut Frame,
+        area: Rect,
+        player: Option<&AudioPlayer>,
+        playing_list: Arc<Mutex<PlayingListManager>>,
+    ) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -242,7 +249,27 @@ impl LibraryScreen {
                     ))
                 })
                 .collect(),
-            LibraryTab::PlayingList => Vec::new(),
+            LibraryTab::PlayingList => {
+                let list = playing_list.lock();
+                list.items()
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, item)| {
+                        let current_marker = if Some(idx) == list.current_index() {
+                            "♫"
+                        } else {
+                            " "
+                        };
+                        ListItem::new(format!(
+                            "{} {} - {}  {}",
+                            current_marker,
+                            item.title,
+                            item.artist,
+                            format_duration(item.duration)
+                        ))
+                    })
+                    .collect()
+            }
         };
 
         let list = List::new(items)

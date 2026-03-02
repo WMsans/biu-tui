@@ -119,7 +119,7 @@ impl App {
                     Screen::Login(login) => login.render(f, area),
                     Screen::Library(library) => {
                         let mut lib = library.clone();
-                        lib.render(f, area, self.player.as_ref());
+                        lib.render(f, area, self.player.as_ref(), self.playing_list.clone());
                     }
                     Screen::Settings(settings_screen) => {
                         let mut s = settings_screen.clone();
