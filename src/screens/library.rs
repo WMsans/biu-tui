@@ -94,7 +94,7 @@ impl LibraryScreen {
         Ok(())
     }
 
-    pub fn render(&mut self, f: &mut Frame, area: Rect) {
+    pub fn render(&mut self, f: &mut Frame, area: Rect, player: Option<&AudioPlayer>) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -196,6 +196,41 @@ impl LibraryScreen {
             .style(Style::default().fg(Color::Cyan))
             .block(Block::default().borders(Borders::TOP));
         f.render_widget(now_playing, chunks[3]);
+
+        let progress_text = if let Some(p) = player {
+            let pos = p.position();
+            let dur = p.duration();
+            let pos_str = format_time(pos);
+            let dur_str = format_time(dur);
+            
+            let progress = if dur.as_secs() > 0 {
+                pos.as_secs_f32() / dur.as_secs_f32()
+            } else {
+                0.0
+            };
+            
+            let width = chunks[4].width as usize;
+            let bar_width = width.saturating_sub(20);
+            let filled = (bar_width as f32 * progress) as usize;
+            let filled = filled.min(bar_width);
+            
+            let bar: String = if bar_width > 0 {
+                let filled_chars: String = std::iter::repeat('━').take(filled).collect();
+                let empty_chars: String = std::iter::repeat('─').take(bar_width - filled).collect();
+                format!("{}╾{}", filled_chars, empty_chars)
+            } else {
+                String::new()
+            };
+            
+            format!("{}  {} / {}", bar, pos_str, dur_str)
+        } else {
+            "━━──────────────  --:-- / --:--".to_string()
+        };
+
+        let progress_bar = Paragraph::new(progress_text)
+            .style(Style::default().fg(Color::Cyan))
+            .block(Block::default().borders(Borders::TOP));
+        f.render_widget(progress_bar, chunks[4]);
 
         let help = Paragraph::new("[j/k] Navigate  [Enter] Select  [Esc] Back  [d] Download  [Tab] Switch")
             .block(Block::default().borders(Borders::TOP));
