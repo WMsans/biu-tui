@@ -366,10 +366,53 @@ impl LibraryScreen {
         }
     }
 
+    pub fn handle_jump_to_song(
+        &mut self,
+        playing_list: Arc<Mutex<PlayingListManager>>,
+        client: Arc<Mutex<BilibiliClient>>,
+        player: &mut Option<AudioPlayer>,
+    ) -> anyhow::Result<()> {
+        if self.current_tab != LibraryTab::PlayingList {
+            return Ok(());
+        }
+
+        let selected_idx = match self.list_state.selected() {
+            Some(idx) => idx,
+            None => return Ok(()),
+        };
+
+        let item = {
+            let mut list = playing_list.lock();
+            list.jump_to(selected_idx);
+            match list.current().cloned() {
+                Some(item) => item,
+                None => return Ok(()),
+            }
+        };
+
+        let audio_stream = {
+            let client = client.lock();
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(client.get_best_audio(&item.bvid, item.cid))?
+        };
+
+        if player.is_none() {
+            *player = Some(AudioPlayer::new()?);
+        }
+
+        if let Some(p) = player {
+            p.play(&audio_stream.url)?;
+            self.now_playing = Some((item.title, item.artist));
+        }
+
+        Ok(())
+    }
+
     pub fn handle_enter(
         &mut self,
         client: Arc<Mutex<BilibiliClient>>,
         player: &mut Option<AudioPlayer>,
+        playing_list: Arc<Mutex<PlayingListManager>>,
     ) -> anyhow::Result<()> {
         match self.current_tab {
             LibraryTab::Favorites => {
@@ -388,8 +431,11 @@ impl LibraryScreen {
                     }
                 }
             }
-            LibraryTab::WatchLater | LibraryTab::History | LibraryTab::PlayingList => {
+            LibraryTab::WatchLater | LibraryTab::History => {
                 self.play_selected(client, player)?;
+            }
+            LibraryTab::PlayingList => {
+                self.handle_jump_to_song(playing_list, client, player)?;
             }
         }
         Ok(())

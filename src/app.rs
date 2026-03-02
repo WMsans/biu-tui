@@ -170,7 +170,11 @@ impl App {
                 KeyCode::Char('j') | KeyCode::Down => library.next_item(),
                 KeyCode::Char('k') | KeyCode::Up => library.prev_item(),
                 KeyCode::Enter => {
-                    if let Err(e) = library.handle_enter(self.client.clone(), &mut self.player) {
+                    if let Err(e) = library.handle_enter(
+                        self.client.clone(),
+                        &mut self.player,
+                        self.playing_list.clone(),
+                    ) {
                         eprintln!("Failed to handle enter: {}", e);
                     }
                     self.apply_volume();
@@ -318,9 +322,11 @@ impl App {
                         }
                         NextAction::PlayNext(idx) => {
                             library.list_state.select(Some(idx));
-                            if let Err(e) =
-                                library.handle_enter(self.client.clone(), &mut self.player)
-                            {
+                            if let Err(e) = library.handle_enter(
+                                self.client.clone(),
+                                &mut self.player,
+                                self.playing_list.clone(),
+                            ) {
                                 eprintln!("Failed to play next: {}", e);
                             }
                             self.apply_volume();
@@ -336,7 +342,11 @@ impl App {
 
     fn replay_current(&mut self) -> Result<()> {
         if let Screen::Library(library) = &mut self.screen {
-            if let Err(e) = library.handle_enter(self.client.clone(), &mut self.player) {
+            if let Err(e) = library.handle_enter(
+                self.client.clone(),
+                &mut self.player,
+                self.playing_list.clone(),
+            ) {
                 eprintln!("Failed to replay: {}", e);
             }
             self.apply_volume();
