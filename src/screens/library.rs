@@ -101,9 +101,9 @@ impl LibraryScreen {
                 Constraint::Length(3),
                 Constraint::Length(1),
                 Constraint::Min(10),
-                Constraint::Length(1),
-                Constraint::Length(1),
-                Constraint::Length(1),
+                Constraint::Length(2),  // now playing: 1 for border + 1 for content
+                Constraint::Length(2),  // progress bar: 1 for border + 1 for content
+                Constraint::Length(2),  // help bar: 1 for border + 1 for content
             ])
             .split(area);
 
@@ -130,26 +130,42 @@ impl LibraryScreen {
 
         let items: Vec<ListItem> = match self.current_tab {
             LibraryTab::Favorites => {
-                if !matches!(self.nav_level, NavigationLevel::Folders) {
-                    self.resources
-                        .iter()
-                        .map(|r| {
-                            let quality_badge = if r.duration > 300 { "[HQ]" } else { "" };
-                            ListItem::new(format!(
-                                "{} {}  {}  {:->5}  {}",
-                                r.bvid,
-                                r.title,
-                                r.upper.name,
-                                format_duration(r.duration),
-                                quality_badge
-                            ))
-                        })
-                        .collect()
-                } else {
-                    self.folders
-                        .iter()
-                        .map(|f| ListItem::new(format!("{} ({})", f.title, f.media_count)))
-                        .collect()
+                match &self.nav_level {
+                    NavigationLevel::Folders => {
+                        self.folders
+                            .iter()
+                            .map(|f| ListItem::new(format!("{} ({})", f.title, f.media_count)))
+                            .collect()
+                    }
+                    NavigationLevel::Videos { .. } => {
+                        self.resources
+                            .iter()
+                            .map(|r| {
+                                let quality_badge = if r.duration > 300 { "[HQ]" } else { "" };
+                                ListItem::new(format!(
+                                    "{} {}  {}  {:->5}  {}",
+                                    r.bvid,
+                                    r.title,
+                                    r.upper.name,
+                                    format_duration(r.duration),
+                                    quality_badge
+                                ))
+                            })
+                            .collect()
+                    }
+                    NavigationLevel::Episodes { .. } => {
+                        self.episodes
+                            .iter()
+                            .map(|ep| {
+                                ListItem::new(format!(
+                                    "P{} {}  {}",
+                                    ep.page,
+                                    ep.part,
+                                    format_duration(ep.duration),
+                                ))
+                            })
+                            .collect()
+                    }
                 }
             }
             LibraryTab::WatchLater => self
@@ -262,10 +278,10 @@ impl LibraryScreen {
     fn current_list_len(&self) -> usize {
         match self.current_tab {
             LibraryTab::Favorites => {
-                if matches!(self.nav_level, NavigationLevel::Folders) {
-                    self.folders.len()
-                } else {
-                    self.resources.len()
+                match &self.nav_level {
+                    NavigationLevel::Folders => self.folders.len(),
+                    NavigationLevel::Videos { .. } => self.resources.len(),
+                    NavigationLevel::Episodes { .. } => self.episodes.len(),
                 }
             }
             LibraryTab::WatchLater => self.watch_later.len(),
@@ -280,10 +296,19 @@ impl LibraryScreen {
     ) -> anyhow::Result<()> {
         match self.current_tab {
             LibraryTab::Favorites => {
-                if matches!(self.nav_level, NavigationLevel::Folders) {
-                    self.select_folder(client)?;
-                } else {
-                    self.play_selected(client, player)?;
+                match &self.nav_level {
+                    NavigationLevel::Folders => {
+                        self.select_folder(client)?;
+                    }
+                    NavigationLevel::Videos { folder_id, folder_title } => {
+                        let folder_id = *folder_id;
+                        let folder_title = folder_title.clone();
+                        self.select_video_or_episodes(client, player, folder_id, folder_title)?;
+                    }
+                    NavigationLevel::Episodes { bvid, .. } => {
+                        let bvid = bvid.clone();
+                        self.play_episode(client, player, &bvid)?;
+                    }
                 }
             }
             LibraryTab::WatchLater | LibraryTab::History => {
@@ -311,6 +336,105 @@ impl LibraryScreen {
                 self.list_state.select(Some(0));
             }
         }
+        Ok(())
+    }
+
+    fn select_video_or_episodes(
+        &mut self,
+        client: Arc<Mutex<BilibiliClient>>,
+        player: &mut Option<AudioPlayer>,
+        folder_id: u64,
+        folder_title: String,
+    ) -> anyhow::Result<()> {
+        if let Some(idx) = self.list_state.selected() {
+            if idx < self.resources.len() {
+                let resource = &self.resources[idx];
+                let bvid = resource.bvid.clone();
+
+                let video_info = {
+                    let client = client.lock();
+                    let rt = tokio::runtime::Runtime::new()?;
+                    rt.block_on(client.get_video_info(&bvid))?
+                };
+
+                if video_info.pages.len() > 1 {
+                    let video_title = video_info.title.clone();
+                    self.episodes = video_info.pages.clone();
+                    self.current_video_info = Some(video_info);
+                    self.nav_level = NavigationLevel::Episodes {
+                        folder_id,
+                        folder_id_title: folder_title,
+                        bvid,
+                        video_title,
+                    };
+                    self.list_state.select(Some(0));
+                } else {
+                    // Single-page video: play directly
+                    self.play_video(client, player, &video_info)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn play_episode(
+        &mut self,
+        client: Arc<Mutex<BilibiliClient>>,
+        player: &mut Option<AudioPlayer>,
+        bvid: &str,
+    ) -> anyhow::Result<()> {
+        if let Some(idx) = self.list_state.selected() {
+            if idx < self.episodes.len() {
+                let episode = &self.episodes[idx];
+                let cid = episode.cid;
+                let episode_title = episode.part.clone();
+
+                let audio_stream = {
+                    let client = client.lock();
+                    let rt = tokio::runtime::Runtime::new()?;
+                    rt.block_on(client.get_best_audio(bvid, cid))?
+                };
+
+                if player.is_none() {
+                    *player = Some(AudioPlayer::new()?);
+                }
+
+                if let Some(p) = player {
+                    p.play(&audio_stream.url)?;
+                    // Show the episode title with the video owner name
+                    let owner_name = self
+                        .current_video_info
+                        .as_ref()
+                        .map(|v| v.owner.name.clone())
+                        .unwrap_or_default();
+                    self.now_playing = Some((episode_title, owner_name));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn play_video(
+        &mut self,
+        client: Arc<Mutex<BilibiliClient>>,
+        player: &mut Option<AudioPlayer>,
+        video_info: &crate::api::VideoInfo,
+    ) -> anyhow::Result<()> {
+        let audio_stream = {
+            let client = client.lock();
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(client.get_best_audio(&video_info.bvid, video_info.cid))?
+        };
+
+        if player.is_none() {
+            *player = Some(AudioPlayer::new()?);
+        }
+
+        if let Some(p) = player {
+            p.play(&audio_stream.url)?;
+            self.now_playing = Some((video_info.title.clone(), video_info.owner.name.clone()));
+        }
+
         Ok(())
     }
 
