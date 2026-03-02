@@ -10,9 +10,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::api::BilibiliClient;
-use crate::audio::AudioPlayer;
+use crate::audio::{AudioPlayer, PlayerState};
 use crate::download::DownloadManager;
-use crate::screens::{LibraryScreen, LibraryTab, LoginScreen, LoginState, SettingsScreen};
+use crate::screens::{
+    LibraryScreen, LibraryTab, LoginScreen, LoginState, NextAction, SettingsScreen,
+};
 use crate::storage::{Config, CookieStorage, Settings};
 
 pub enum Screen {
@@ -32,6 +34,7 @@ pub struct App {
     last_qr_poll: Option<Instant>,
     settings: Settings,
     previous_library: Option<LibraryScreen>,
+    previous_player_state: Option<PlayerState>,
 }
 
 impl App {
@@ -75,6 +78,7 @@ impl App {
             last_qr_poll: None,
             settings,
             previous_library: None,
+            previous_player_state: None,
         })
     }
 
@@ -124,6 +128,7 @@ impl App {
             }
 
             self.poll_qr_login()?;
+            self.poll_playback_completion()?;
         }
 
         self.cleanup()?;
@@ -272,6 +277,47 @@ impl App {
                     }
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn poll_playback_completion(&mut self) -> Result<()> {
+        if let Screen::Library(library) = &mut self.screen {
+            let current_state = self.player.as_ref().map(|p| p.state());
+
+            let was_playing = self.previous_player_state == Some(PlayerState::Playing);
+            let now_stopped = current_state == Some(PlayerState::Stopped);
+
+            if was_playing && now_stopped {
+                if let Some(next_action) = library.get_next_action() {
+                    match next_action {
+                        NextAction::ReplayCurrent => {
+                            self.replay_current()?;
+                        }
+                        NextAction::PlayNext(idx) => {
+                            library.list_state.select(Some(idx));
+                            if let Err(e) =
+                                library.handle_enter(self.client.clone(), &mut self.player)
+                            {
+                                eprintln!("Failed to play next: {}", e);
+                            }
+                            self.apply_volume();
+                        }
+                    }
+                }
+            }
+
+            self.previous_player_state = current_state;
+        }
+        Ok(())
+    }
+
+    fn replay_current(&mut self) -> Result<()> {
+        if let Screen::Library(library) = &mut self.screen {
+            if let Err(e) = library.handle_enter(self.client.clone(), &mut self.player) {
+                eprintln!("Failed to replay: {}", e);
+            }
+            self.apply_volume();
         }
         Ok(())
     }
