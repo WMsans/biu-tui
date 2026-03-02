@@ -108,3 +108,22 @@ impl Settings {
         self.volume as f32 / 100.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_loop_mode_next_sequence() {
+        assert_eq!(LoopMode::LoopOne.next(), LoopMode::NoLoop);
+        assert_eq!(LoopMode::NoLoop.next(), LoopMode::LoopList);
+        assert_eq!(LoopMode::LoopList.next(), LoopMode::LoopOne);
+    }
+
+    #[test]
+    fn test_loop_mode_prev_sequence() {
+        assert_eq!(LoopMode::LoopOne.prev(), LoopMode::LoopList);
+        assert_eq!(LoopMode::NoLoop.prev(), LoopMode::LoopOne);
+        assert_eq!(LoopMode::LoopList.prev(), LoopMode::NoLoop);
+    }
+}

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlaylistItem {
     pub bvid: String,
     pub cid: u64,
@@ -167,5 +167,144 @@ impl PlayingListManager {
         self.items.clear();
         self.current_index = None;
         let _ = self.save();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn create_test_manager() -> PlayingListManager {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("playing_list.json");
+
+        PlayingListManager {
+            items: Vec::new(),
+            current_index: None,
+            storage_path: path,
+        }
+    }
+
+    fn create_test_item(id: usize) -> PlaylistItem {
+        PlaylistItem {
+            bvid: format!("BV{}", id),
+            cid: id as u64,
+            title: format!("Song {}", id),
+            artist: format!("Artist {}", id),
+            duration: 180,
+        }
+    }
+
+    #[test]
+    fn test_add_item() {
+        let mut manager = create_test_manager();
+        let item = create_test_item(1);
+
+        manager.add(item.clone());
+
+        assert_eq!(manager.items().len(), 1);
+        assert_eq!(manager.current_index(), Some(0));
+        assert_eq!(manager.current(), Some(&item));
+    }
+
+    #[test]
+    fn test_add_multiple_items() {
+        let mut manager = create_test_manager();
+
+        manager.add(create_test_item(1));
+        manager.add(create_test_item(2));
+        manager.add(create_test_item(3));
+
+        assert_eq!(manager.items().len(), 3);
+        assert_eq!(manager.current_index(), Some(0));
+    }
+
+    #[test]
+    fn test_remove_item() {
+        let mut manager = create_test_manager();
+        manager.add(create_test_item(1));
+        manager.add(create_test_item(2));
+
+        let removed = manager.remove(1);
+
+        assert!(removed.is_some());
+        assert_eq!(manager.items().len(), 1);
+    }
+
+    #[test]
+    fn test_remove_current_item_advances_to_next() {
+        let mut manager = create_test_manager();
+        manager.add(create_test_item(1));
+        manager.add(create_test_item(2));
+        manager.jump_to(0);
+
+        manager.remove(0);
+
+        assert_eq!(manager.current_index(), Some(0));
+        assert_eq!(manager.current().unwrap().bvid, "BV2");
+    }
+
+    #[test]
+    fn test_jump_to_song() {
+        let mut manager = create_test_manager();
+        manager.add(create_test_item(1));
+        manager.add(create_test_item(2));
+        manager.add(create_test_item(3));
+
+        manager.jump_to(2);
+
+        assert_eq!(manager.current_index(), Some(2));
+        assert_eq!(manager.current().unwrap().bvid, "BV3");
+    }
+
+    #[test]
+    fn test_next_wraps_around() {
+        let mut manager = create_test_manager();
+        manager.add(create_test_item(1));
+        manager.add(create_test_item(2));
+        manager.jump_to(1);
+
+        let result = manager.next();
+
+        assert!(result.is_none());
+        assert_eq!(manager.current_index(), Some(1));
+    }
+
+    #[test]
+    fn test_persistence_save_and_load() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("playing_list.json");
+
+        let mut manager = PlayingListManager {
+            items: Vec::new(),
+            current_index: None,
+            storage_path: path.clone(),
+        };
+
+        manager.add(create_test_item(1));
+        manager.add(create_test_item(2));
+        manager.jump_to(1);
+
+        let loaded_manager = PlayingListManager {
+            items: Vec::new(),
+            current_index: None,
+            storage_path: path,
+        };
+
+        let mut loaded_manager = loaded_manager;
+        loaded_manager.load().unwrap();
+
+        assert_eq!(loaded_manager.items().len(), 2);
+        assert_eq!(loaded_manager.current_index(), Some(1));
+    }
+
+    #[test]
+    fn test_empty_list_operations() {
+        let manager = create_test_manager();
+
+        assert_eq!(manager.items().len(), 0);
+        assert_eq!(manager.current_index(), None);
+        assert_eq!(manager.current(), None);
     }
 }
