@@ -912,6 +912,40 @@ impl LibraryScreen {
         }
     }
 
+    fn try_load_more_favorites(&mut self, client: Arc<Mutex<BilibiliClient>>, folder_id: u64) {
+        if !self.has_more_resources || self.is_loading_more {
+            return;
+        }
+
+        self.is_loading_more = true;
+        self.status_message = Some("Loading more...".to_string());
+
+        let next_page = self.current_folder_page + 1;
+
+        let result = {
+            let client = client.lock();
+            let rt = tokio::runtime::Runtime::new().ok();
+            rt.and_then(|rt| {
+                rt.block_on(client.get_folder_resources(folder_id, next_page))
+                    .ok()
+            })
+        };
+
+        match result {
+            Some((new_resources, has_more)) => {
+                self.resources.extend(new_resources);
+                self.current_folder_page = next_page;
+                self.has_more_resources = has_more;
+                self.status_message = None;
+            }
+            None => {
+                self.status_message = Some("Failed to load more".to_string());
+            }
+        }
+
+        self.is_loading_more = false;
+    }
+
     pub fn handle_remove_song(
         &mut self,
         playing_list: Arc<Mutex<PlayingListManager>>,
