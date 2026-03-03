@@ -482,12 +482,20 @@ impl App {
         match cmd {
             MprisCommand::Play => {
                 if let Some(player) = &self.player {
-                    if player.state() == PlayerState::Paused {
-                        player.resume();
-                        if let Some(mpris) = &self.mpris {
-                            mpris.set_state(PlayerState::Playing);
+                    match player.state() {
+                        PlayerState::Paused => {
+                            player.resume();
+                            if let Some(mpris) = &self.mpris {
+                                mpris.set_state(PlayerState::Playing);
+                            }
                         }
+                        PlayerState::Stopped => {
+                            self.start_playback_if_available()?;
+                        }
+                        _ => {}
                     }
+                } else {
+                    self.start_playback_if_available()?;
                 }
             }
             MprisCommand::Pause => {
@@ -518,19 +526,19 @@ impl App {
                     self.play_playlist_item(&item)?;
                 }
             }
-            MprisCommand::Seek(_position) => {
+            MprisCommand::Seek(position) => {
                 if let Some(player) = &self.player {
-                    player.seek(_position);
+                    player.seek(position);
                     if let Some(mpris) = &self.mpris {
-                        mpris.set_position(_position);
+                        mpris.set_position(position);
                     }
                 }
             }
-            MprisCommand::SetPosition(_position) => {
+            MprisCommand::SetPosition(position) => {
                 if let Some(player) = &self.player {
-                    player.seek(_position);
+                    player.seek(position);
                     if let Some(mpris) = &self.mpris {
-                        mpris.set_position(_position);
+                        mpris.set_position(position);
                     }
                 }
             }
