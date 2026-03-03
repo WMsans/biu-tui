@@ -200,7 +200,7 @@ impl App {
                         library.reset_selection_for_tab(self.playing_list.clone());
                     }
                     KeyCode::Char('j') | KeyCode::Down => {
-                        library.next_item(&self.playing_list);
+                        library.next_item(&self.playing_list, self.client.clone());
                     }
                     KeyCode::Char('k') | KeyCode::Up => {
                         library.prev_item(&self.playing_list);
