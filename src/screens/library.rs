@@ -385,14 +385,20 @@ impl LibraryScreen {
         f.render_widget(help, chunks[5]);
     }
 
-    pub fn next_item(&mut self, playing_list: &Arc<Mutex<PlayingListManager>>) {
+    pub fn next_item(
+        &mut self,
+        playing_list: &Arc<Mutex<PlayingListManager>>,
+        client: Arc<Mutex<BilibiliClient>>,
+    ) {
         let len = self.current_list_len_with_playlist(playing_list);
         if len > 0 {
-            let i = self
-                .list_state
-                .selected()
-                .map_or(0, |i| if i >= len - 1 { 0 } else { i + 1 });
-            self.list_state.select(Some(i));
+            let current = self.list_state.selected().unwrap_or(0);
+            let next_idx = if current >= len - 1 { 0 } else { current + 1 };
+            self.list_state.select(Some(next_idx));
+
+            if next_idx == len - 1 {
+                self.try_load_more(client);
+            }
         }
     }
 
