@@ -94,7 +94,17 @@ impl AudioPlayer {
                 let output_sample_rate = decoder.output_sample_rate() as u64;
 
                 let min_buffer_size = buffer_size / 3;
-                while *state.lock() == PlayerState::Playing {
+                loop {
+                    let current_state = *state.lock();
+                    match current_state {
+                        PlayerState::Stopped => break,
+                        PlayerState::Paused => {
+                            std::thread::sleep(Duration::from_millis(10));
+                            continue;
+                        }
+                        PlayerState::Playing => {}
+                    }
+
                     match decoder.decode_next() {
                         Ok(Some(samples)) => {
                             total_samples_decoded += samples.len() as u64;
@@ -115,7 +125,7 @@ impl AudioPlayer {
                                     }
                                 }
                                 if offset < samples.len() {
-                                    if *state.lock() != PlayerState::Playing {
+                                    if *state.lock() == PlayerState::Stopped {
                                         break;
                                     }
                                     std::thread::sleep(Duration::from_millis(1));

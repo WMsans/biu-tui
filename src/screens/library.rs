@@ -314,7 +314,9 @@ impl LibraryScreen {
             .block(Block::default().borders(Borders::TOP));
         f.render_widget(now_playing, chunks[3]);
 
-        let progress_text = if let Some(p) = player {
+        use crate::audio::PlayerState;
+
+        let (progress_text, progress_color) = if let Some(p) = player {
             let pos = p.position();
             let dur = p.duration();
             let pos_str = format_time(pos);
@@ -339,13 +341,18 @@ impl LibraryScreen {
                 String::new()
             };
 
-            format!("{}  {} / {}", bar, pos_str, dur_str)
+            let color = match p.state() {
+                PlayerState::Paused => Color::Yellow,
+                _ => Color::Cyan,
+            };
+
+            (format!("{}  {} / {}", bar, pos_str, dur_str), color)
         } else {
-            "━━──────────────  --:-- / --:--".to_string()
+            ("━━──────────────  --:-- / --:--".to_string(), Color::Cyan)
         };
 
         let progress_bar = Paragraph::new(progress_text)
-            .style(Style::default().fg(Color::Cyan))
+            .style(Style::default().fg(progress_color))
             .block(Block::default().borders(Borders::TOP));
         f.render_widget(progress_bar, chunks[4]);
 
