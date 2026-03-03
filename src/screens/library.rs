@@ -40,6 +40,8 @@ pub enum NextAction {
     PlayNext(usize),
 }
 
+const SCROLL_PADDING: usize = 3;
+
 #[derive(Clone)]
 pub struct LibraryScreen {
     pub current_tab: LibraryTab,
@@ -59,6 +61,7 @@ pub struct LibraryScreen {
     pub history_page: u32,
     pub has_more_history: bool,
     pub is_loading_more: bool,
+    visible_height: usize,
 }
 
 impl Default for LibraryScreen {
@@ -87,6 +90,7 @@ impl LibraryScreen {
             history_page: 1,
             has_more_history: true,
             is_loading_more: false,
+            visible_height: 0,
         }
     }
 
@@ -316,7 +320,11 @@ impl LibraryScreen {
         let list = List::new(items)
             .block(Block::default().borders(Borders::ALL))
             .highlight_style(Style::default().bg(Color::DarkGray));
+
+        let visible_height = chunks[2].height.saturating_sub(2) as usize;
+        self.adjust_scroll_offset(visible_height);
         f.render_stateful_widget(list, chunks[2], &mut self.list_state);
+        self.visible_height = visible_height;
 
         let now_playing_text = if let Some((title, artist)) = &self.now_playing {
             format!("♫ Now Playing: {} - {}", title, artist)
@@ -415,6 +423,28 @@ impl LibraryScreen {
                 .map_or(0, |i| if i == 0 { len - 1 } else { i - 1 });
             self.list_state.select(Some(i));
         }
+    }
+
+    fn adjust_scroll_offset(&mut self, height: usize) {
+        let selected = match self.list_state.selected() {
+            Some(s) => s,
+            None => return,
+        };
+
+        if height == 0 {
+            return;
+        }
+
+        let current_offset = self.list_state.offset();
+        let max_offset = selected.saturating_sub(SCROLL_PADDING);
+        let min_offset = (selected + SCROLL_PADDING + 1).saturating_sub(height);
+
+        let new_offset = if min_offset <= max_offset {
+            current_offset.clamp(min_offset, max_offset)
+        } else {
+            max_offset
+        };
+        *self.list_state.offset_mut() = new_offset;
     }
 
     fn current_list_len_with_playlist(
