@@ -155,6 +155,19 @@ impl PlayingListManager {
         self.current()
     }
 
+    pub fn advance_to_previous(&mut self) -> Option<&PlaylistItem> {
+        let current = self.current_index?;
+
+        if current > 0 {
+            self.current_index = Some(current - 1);
+        } else {
+            return None;
+        }
+
+        let _ = self.save();
+        self.current()
+    }
+
     pub fn items(&self) -> &[PlaylistItem] {
         &self.items
     }

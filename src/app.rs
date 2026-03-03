@@ -169,6 +169,18 @@ impl App {
                 }
             }
 
+            if let (Some(player), Some(mpris)) = (&self.player, &self.mpris) {
+                mpris.set_position(player.position());
+            }
+
+            if let Some(mpris) = &self.mpris {
+                for cmd in mpris.poll_commands() {
+                    if let Err(e) = self.handle_mpris_command(cmd) {
+                        eprintln!("Failed to handle MPRIS command: {}", e);
+                    }
+                }
+            }
+
             self.poll_qr_login()?;
             self.poll_playback_completion()?;
         }
@@ -416,6 +428,12 @@ impl App {
 
         if let Some(p) = &mut self.player {
             p.play(&audio_stream.url)?;
+
+            if let Some(mpris) = &self.mpris {
+                mpris.set_track(item);
+                mpris.set_state(PlayerState::Playing);
+            }
+
             if let Screen::Library(library) = &mut self.screen {
                 library.now_playing = Some((item.title.clone(), item.artist.clone()));
             }
@@ -430,9 +448,15 @@ impl App {
             match player.state() {
                 PlayerState::Playing => {
                     player.pause();
+                    if let Some(mpris) = &self.mpris {
+                        mpris.set_state(PlayerState::Paused);
+                    }
                 }
                 PlayerState::Paused => {
                     player.resume();
+                    if let Some(mpris) = &self.mpris {
+                        mpris.set_state(PlayerState::Playing);
+                    }
                 }
                 PlayerState::Stopped => {
                     self.start_playback_if_available()?;
@@ -440,6 +464,83 @@ impl App {
             }
         } else {
             self.start_playback_if_available()?;
+        }
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<()> {
+        if let Some(player) = &mut self.player {
+            player.stop();
+            if let Some(mpris) = &self.mpris {
+                mpris.set_state(PlayerState::Stopped);
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_mpris_command(&mut self, cmd: MprisCommand) -> Result<()> {
+        match cmd {
+            MprisCommand::Play => {
+                if let Some(player) = &self.player {
+                    if player.state() == PlayerState::Paused {
+                        player.resume();
+                        if let Some(mpris) = &self.mpris {
+                            mpris.set_state(PlayerState::Playing);
+                        }
+                    }
+                }
+            }
+            MprisCommand::Pause => {
+                if let Some(player) = &self.player {
+                    if player.state() == PlayerState::Playing {
+                        player.pause();
+                        if let Some(mpris) = &self.mpris {
+                            mpris.set_state(PlayerState::Paused);
+                        }
+                    }
+                }
+            }
+            MprisCommand::PlayPause => {
+                self.toggle_playback()?;
+            }
+            MprisCommand::Stop => {
+                self.stop()?;
+            }
+            MprisCommand::Next => {
+                let next_item = self.playing_list.lock().advance_to_next().cloned();
+                if let Some(item) = next_item {
+                    self.play_playlist_item(&item)?;
+                }
+            }
+            MprisCommand::Previous => {
+                let prev_item = self.playing_list.lock().advance_to_previous().cloned();
+                if let Some(item) = prev_item {
+                    self.play_playlist_item(&item)?;
+                }
+            }
+            MprisCommand::Seek(_position) => {
+                if let Some(player) = &self.player {
+                    player.seek(_position);
+                    if let Some(mpris) = &self.mpris {
+                        mpris.set_position(_position);
+                    }
+                }
+            }
+            MprisCommand::SetPosition(_position) => {
+                if let Some(player) = &self.player {
+                    player.seek(_position);
+                    if let Some(mpris) = &self.mpris {
+                        mpris.set_position(_position);
+                    }
+                }
+            }
+            MprisCommand::SetVolume(volume) => {
+                self.settings.volume = (volume * 100.0) as u32;
+                self.apply_volume();
+                if let Some(mpris) = &self.mpris {
+                    mpris.set_volume(volume as f32);
+                }
+            }
         }
         Ok(())
     }
