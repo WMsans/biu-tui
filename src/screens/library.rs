@@ -54,6 +54,11 @@ pub struct LibraryScreen {
     pub current_video_info: Option<crate::api::VideoInfo>,
     pub loop_mode: LoopMode,
     pub status_message: Option<String>,
+    pub current_folder_page: u32,
+    pub has_more_resources: bool,
+    pub history_page: u32,
+    pub has_more_history: bool,
+    pub is_loading_more: bool,
 }
 
 impl Default for LibraryScreen {
@@ -77,6 +82,11 @@ impl LibraryScreen {
             current_video_info: None,
             loop_mode: LoopMode::default(),
             status_message: None,
+            current_folder_page: 1,
+            has_more_resources: true,
+            history_page: 1,
+            has_more_history: true,
+            is_loading_more: false,
         }
     }
 
