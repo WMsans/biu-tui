@@ -172,6 +172,10 @@ impl LibraryScreen {
         self.watch_later = watch_later;
         self.history = history;
 
+        // Initialize history pagination
+        self.history_page = 1;
+        self.has_more_history = self.history.len() >= 20;
+
         // Initialize selection to the first item if data was loaded
         if !self.folders.is_empty() {
             self.list_state.select(Some(0));
