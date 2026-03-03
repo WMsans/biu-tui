@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use crate::api::BilibiliClient;
 use crate::audio::{AudioPlayer, PlayerState};
 use crate::download::DownloadManager;
+use crate::mpris::{MprisCommand, MprisManager};
 use crate::playing_list::{PlayingListManager, PlaylistItem};
 use crate::screens::{LibraryScreen, LibraryTab, LoginScreen, LoginState, SettingsScreen};
 use crate::storage::{Config, CookieStorage, LoopMode, Settings};
@@ -35,6 +36,7 @@ pub struct App {
     playing_list: Arc<Mutex<PlayingListManager>>,
     previous_library: Option<LibraryScreen>,
     previous_player_state: Option<PlayerState>,
+    mpris: Option<MprisManager>,
 }
 
 impl App {
@@ -95,6 +97,10 @@ impl App {
             Screen::Login(LoginScreen::new())
         };
 
+        let mpris = MprisManager::new()
+            .map_err(|e| eprintln!("MPRIS initialization failed: {}", e))
+            .ok();
+
         Ok(Self {
             terminal,
             running: true,
@@ -108,6 +114,7 @@ impl App {
             playing_list,
             previous_library: None,
             previous_player_state: None,
+            mpris,
         })
     }
 
