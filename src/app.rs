@@ -246,6 +246,9 @@ impl App {
                         let settings_screen = SettingsScreen::new(self.settings.clone());
                         self.screen = Screen::Settings(settings_screen);
                     }
+                    KeyCode::Char(' ') => {
+                        self.toggle_playback()?;
+                    }
                     _ => {}
                 }
             }
@@ -412,6 +415,43 @@ impl App {
         }
 
         self.apply_volume();
+        Ok(())
+    }
+
+    fn toggle_playback(&mut self) -> Result<()> {
+        if let Some(player) = &self.player {
+            match player.state() {
+                PlayerState::Playing => {
+                    player.pause();
+                }
+                PlayerState::Paused => {
+                    player.resume();
+                }
+                PlayerState::Stopped => {
+                    self.start_playback_if_available()?;
+                }
+            }
+        } else {
+            self.start_playback_if_available()?;
+        }
+        Ok(())
+    }
+
+    fn start_playback_if_available(&mut self) -> Result<()> {
+        let item = {
+            let mut list = self.playing_list.lock();
+            if list.items().is_empty() {
+                return Ok(());
+            }
+            if list.current().is_none() {
+                list.jump_to(0);
+            }
+            list.current().cloned()
+        };
+
+        if let Some(item) = item {
+            self.play_playlist_item(&item)?;
+        }
         Ok(())
     }
 
