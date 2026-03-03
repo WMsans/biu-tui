@@ -912,6 +912,22 @@ impl LibraryScreen {
         }
     }
 
+    fn try_load_more(&mut self, client: Arc<Mutex<BilibiliClient>>) {
+        if self.is_loading_more {
+            return;
+        }
+
+        match self.current_tab {
+            LibraryTab::Favorites => {
+                if let NavigationLevel::Videos { folder_id, .. } = &self.nav_level {
+                    self.try_load_more_favorites(client, *folder_id);
+                }
+            }
+            LibraryTab::History => self.try_load_more_history(client),
+            _ => {}
+        }
+    }
+
     fn try_load_more_favorites(&mut self, client: Arc<Mutex<BilibiliClient>>, folder_id: u64) {
         if !self.has_more_resources || self.is_loading_more {
             return;
