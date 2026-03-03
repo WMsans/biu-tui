@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use async_channel::{Receiver, Sender, unbounded};
 use mpris_server::{Metadata, PlaybackStatus, Player, Time, TrackId, Volume};
+use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -11,10 +14,12 @@ use crate::playing_list::PlaylistItem;
 pub enum MprisCommand {
     Play,
     Pause,
+    PlayPause,
     Stop,
     Next,
     Previous,
     Seek(Duration),
+    SetPosition(Duration),
     SetVolume(f64),
 }
 
@@ -29,7 +34,16 @@ pub enum MprisUpdate {
 pub struct MprisManager {
     command_receiver: Receiver<MprisCommand>,
     update_sender: Sender<MprisUpdate>,
+    shutdown: Arc<AtomicBool>,
     _thread: JoinHandle<()>,
+}
+
+impl fmt::Debug for MprisManager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MprisManager")
+            .field("shutdown", &self.shutdown.load(Ordering::SeqCst))
+            .finish_non_exhaustive()
+    }
 }
 
 impl MprisManager {
@@ -38,11 +52,13 @@ impl MprisManager {
             unbounded();
         let (update_sender, update_receiver): (Sender<MprisUpdate>, Receiver<MprisUpdate>) =
             unbounded();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_clone = shutdown.clone();
 
         let thread = std::thread::Builder::new()
             .name("mpris-server".into())
             .spawn(move || {
-                if let Err(e) = Self::run_mpris_server(command_sender, update_receiver) {
+                if let Err(e) = Self::run_mpris_server(command_sender, update_receiver, shutdown_clone) {
                     eprintln!("MPRIS server thread error: {}", e);
                 }
             })
@@ -51,6 +67,7 @@ impl MprisManager {
         Ok(Self {
             command_receiver,
             update_sender,
+            shutdown,
             _thread: thread,
         })
     }
@@ -58,6 +75,7 @@ impl MprisManager {
     fn run_mpris_server(
         command_sender: Sender<MprisCommand>,
         update_receiver: Receiver<MprisUpdate>,
+        shutdown: Arc<AtomicBool>,
     ) -> Result<()> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -82,7 +100,7 @@ impl MprisManager {
 
         let cmd_sender = command_sender.clone();
         player.connect_play_pause(move |_| {
-            let _ = cmd_sender.try_send(MprisCommand::Play);
+            let _ = cmd_sender.try_send(MprisCommand::PlayPause);
         });
 
         let cmd_sender = command_sender.clone();
@@ -119,7 +137,7 @@ impl MprisManager {
         let cmd_sender = command_sender.clone();
         player.connect_set_position(move |_, _track_id: &TrackId, position: Time| {
             let duration = Duration::from_micros(position.as_micros() as u64);
-            let _ = cmd_sender.try_send(MprisCommand::Seek(duration));
+            let _ = cmd_sender.try_send(MprisCommand::SetPosition(duration));
         });
 
         let cmd_sender = command_sender;
@@ -163,10 +181,15 @@ impl MprisManager {
                                     eprintln!("Failed to set MPRIS volume: {}", e);
                                 }
                             }
-                            Err(_) => {}
+                            Err(_) => break,
                         }
                     }
                     _ = run_task.as_mut() => break,
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                        if shutdown.load(Ordering::SeqCst) {
+                            break;
+                        }
+                    }
                 }
             }
         });
@@ -197,5 +220,11 @@ impl MprisManager {
             commands.push(cmd);
         }
         commands
+    }
+}
+
+impl Drop for MprisManager {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::SeqCst);
     }
 }
