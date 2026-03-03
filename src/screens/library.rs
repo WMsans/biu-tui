@@ -512,6 +512,8 @@ impl LibraryScreen {
                 let folder_id = folder.id;
                 let folder_title = folder.title.clone();
 
+                self.current_folder_page = 1;
+
                 let resources = {
                     let client = client.lock();
                     let rt = tokio::runtime::Runtime::new()?;
@@ -519,6 +521,7 @@ impl LibraryScreen {
                 };
 
                 self.resources = resources.0;
+                self.has_more_resources = resources.1;
                 self.nav_level = NavigationLevel::Videos {
                     folder_id,
                     folder_title,
