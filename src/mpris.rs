@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use async_channel::{Receiver, Sender, unbounded};
 use mpris_server::{Metadata, PlaybackStatus, Player, Time, TrackId, Volume};
-use std::pin::pin;
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crate::audio::PlayerState;
@@ -29,26 +29,56 @@ pub enum MprisUpdate {
 pub struct MprisManager {
     command_receiver: Receiver<MprisCommand>,
     update_sender: Sender<MprisUpdate>,
+    _thread: JoinHandle<()>,
 }
 
 impl MprisManager {
-    pub async fn new() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let (command_sender, command_receiver): (Sender<MprisCommand>, Receiver<MprisCommand>) =
             unbounded();
         let (update_sender, update_receiver): (Sender<MprisUpdate>, Receiver<MprisUpdate>) =
             unbounded();
 
-        let player = Player::builder("com.github.biu-tui")
-            .identity("Biu TUI")
-            .can_play(true)
-            .can_pause(true)
-            .can_go_next(true)
-            .can_go_previous(true)
-            .can_seek(true)
-            .can_control(true)
+        let thread = std::thread::Builder::new()
+            .name("mpris-server".into())
+            .spawn(move || {
+                if let Err(e) = Self::run_mpris_server(command_sender, update_receiver) {
+                    eprintln!("MPRIS server thread error: {}", e);
+                }
+            })
+            .context("Failed to spawn MPRIS server thread")?;
+
+        Ok(Self {
+            command_receiver,
+            update_sender,
+            _thread: thread,
+        })
+    }
+
+    fn run_mpris_server(
+        command_sender: Sender<MprisCommand>,
+        update_receiver: Receiver<MprisUpdate>,
+    ) -> Result<()> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
             .build()
-            .await
-            .context("Failed to create MPRIS player")?;
+            .context("Failed to create MPRIS runtime")?;
+
+        let local_set = tokio::task::LocalSet::new();
+
+        let player = runtime.block_on(local_set.run_until(async {
+            Player::builder("com.github.biu-tui")
+                .identity("Biu TUI")
+                .can_play(true)
+                .can_pause(true)
+                .can_go_next(true)
+                .can_go_previous(true)
+                .can_seek(true)
+                .can_control(true)
+                .build()
+                .await
+                .context("Failed to create MPRIS player")
+        }))?;
 
         let cmd_sender = command_sender.clone();
         player.connect_play_pause(move |_| {
@@ -97,9 +127,8 @@ impl MprisManager {
             let _ = cmd_sender.try_send(MprisCommand::SetVolume(volume));
         });
 
-        tokio::task::spawn_local(async move {
-            let run_task = player.run();
-            let mut run_task = pin!(run_task);
+        local_set.spawn_local(async move {
+            let mut run_task = std::pin::pin!(player.run());
 
             loop {
                 tokio::select! {
@@ -142,10 +171,8 @@ impl MprisManager {
             }
         });
 
-        Ok(Self {
-            command_receiver,
-            update_sender,
-        })
+        runtime.block_on(local_set);
+        Ok(())
     }
 
     pub fn set_track(&self, item: &PlaylistItem) {
