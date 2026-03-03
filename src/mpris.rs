@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use async_channel::{Receiver, Sender, unbounded};
+use async_channel::{unbounded, Receiver, Sender};
 use mpris_server::{Metadata, PlaybackStatus, Player, Time, TrackId, Volume};
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,6 +26,13 @@ pub enum MprisCommand {
 #[derive(Debug, Clone)]
 pub enum MprisUpdate {
     SetTrack(PlaylistItem),
+    /// Set track info directly from title, artist, and duration (seconds).
+    /// Used when a PlaylistItem is not available (e.g., direct library playback).
+    SetTrackInfo {
+        title: String,
+        artist: String,
+        duration: u32,
+    },
     SetState(PlayerState),
     SetPosition(Duration),
     SetVolume(f32),
@@ -58,7 +65,9 @@ impl MprisManager {
         let thread = std::thread::Builder::new()
             .name("mpris-server".into())
             .spawn(move || {
-                if let Err(e) = Self::run_mpris_server(command_sender, update_receiver, shutdown_clone) {
+                if let Err(e) =
+                    Self::run_mpris_server(command_sender, update_receiver, shutdown_clone)
+                {
                     eprintln!("MPRIS server thread error: {}", e);
                 }
             })
@@ -146,52 +155,73 @@ impl MprisManager {
         });
 
         local_set.spawn_local(async move {
-            let mut run_task = std::pin::pin!(player.run());
+            let run_task = player.run();
 
-            loop {
-                tokio::select! {
-                    update = update_receiver.recv() => {
-                        match update {
-                            Ok(MprisUpdate::SetTrack(item)) => {
-                                let metadata = Metadata::builder()
-                                    .title(item.title)
-                                    .artist([item.artist])
-                                    .length(Time::from_micros(item.duration as i64 * 1_000_000))
-                                    .build();
-                                if let Err(e) = player.set_metadata(metadata).await {
-                                    eprintln!("Failed to set MPRIS metadata: {}", e);
+            tokio::join!(
+                async {
+                    run_task.await;
+                },
+                async {
+                    loop {
+                        tokio::select! {
+                            biased;
+                            update = update_receiver.recv() => {
+                                match update {
+                                    Ok(MprisUpdate::SetTrack(item)) => {
+                                        let track_path = format!("/com/github/biu_tui/track/{}", item.bvid);
+                                        let track_id = TrackId::try_from(track_path.as_str())
+                                            .unwrap_or(TrackId::NO_TRACK);
+                                        let metadata = Metadata::builder()
+                                            .trackid(track_id)
+                                            .title(item.title)
+                                            .artist([item.artist])
+                                            .length(Time::from_micros(item.duration as i64 * 1_000_000))
+                                            .build();
+                                        if let Err(e) = player.set_metadata(metadata).await {
+                                            eprintln!("Failed to set MPRIS metadata: {}", e);
+                                        }
+                                    }
+                                    Ok(MprisUpdate::SetTrackInfo { title, artist, duration }) => {
+                                        let metadata = Metadata::builder()
+                                            .title(title)
+                                            .artist([artist])
+                                            .length(Time::from_micros(duration as i64 * 1_000_000))
+                                            .build();
+                                        if let Err(e) = player.set_metadata(metadata).await {
+                                            eprintln!("Failed to set MPRIS metadata: {}", e);
+                                        }
+                                    }
+                                    Ok(MprisUpdate::SetState(state)) => {
+                                        let status = match state {
+                                            PlayerState::Playing => PlaybackStatus::Playing,
+                                            PlayerState::Paused => PlaybackStatus::Paused,
+                                            PlayerState::Stopped => PlaybackStatus::Stopped,
+                                        };
+                                        if let Err(e) = player.set_playback_status(status).await {
+                                            eprintln!("Failed to set MPRIS playback status: {}", e);
+                                        }
+                                    }
+                                    Ok(MprisUpdate::SetPosition(position)) => {
+                                        let time = Time::from_micros(position.as_micros() as i64);
+                                        player.set_position(time);
+                                    }
+                                    Ok(MprisUpdate::SetVolume(volume)) => {
+                                        if let Err(e) = player.set_volume(volume as f64).await {
+                                            eprintln!("Failed to set MPRIS volume: {}", e);
+                                        }
+                                    }
+                                    Err(_) => break,
                                 }
                             }
-                            Ok(MprisUpdate::SetState(state)) => {
-                                let status = match state {
-                                    PlayerState::Playing => PlaybackStatus::Playing,
-                                    PlayerState::Paused => PlaybackStatus::Paused,
-                                    PlayerState::Stopped => PlaybackStatus::Stopped,
-                                };
-                                if let Err(e) = player.set_playback_status(status).await {
-                                    eprintln!("Failed to set MPRIS playback status: {}", e);
+                            _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                                if shutdown.load(Ordering::SeqCst) {
+                                    break;
                                 }
                             }
-                            Ok(MprisUpdate::SetPosition(position)) => {
-                                let time = Time::from_micros(position.as_micros() as i64);
-                                player.set_position(time);
-                            }
-                            Ok(MprisUpdate::SetVolume(volume)) => {
-                                if let Err(e) = player.set_volume(volume as f64).await {
-                                    eprintln!("Failed to set MPRIS volume: {}", e);
-                                }
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                    _ = run_task.as_mut() => break,
-                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                        if shutdown.load(Ordering::SeqCst) {
-                            break;
                         }
                     }
                 }
-            }
+            );
         });
 
         runtime.block_on(local_set);
@@ -199,7 +229,18 @@ impl MprisManager {
     }
 
     pub fn set_track(&self, item: &PlaylistItem) {
-        let _ = self.update_sender.try_send(MprisUpdate::SetTrack(item.clone()));
+        let _ = self
+            .update_sender
+            .try_send(MprisUpdate::SetTrack(item.clone()));
+    }
+
+    /// Set track info directly when a full PlaylistItem is not available.
+    pub fn set_track_info(&self, title: &str, artist: &str, duration: u32) {
+        let _ = self.update_sender.try_send(MprisUpdate::SetTrackInfo {
+            title: title.to_string(),
+            artist: artist.to_string(),
+            duration,
+        });
     }
 
     pub fn set_state(&self, state: PlayerState) {
@@ -207,7 +248,9 @@ impl MprisManager {
     }
 
     pub fn set_position(&self, position: Duration) {
-        let _ = self.update_sender.try_send(MprisUpdate::SetPosition(position));
+        let _ = self
+            .update_sender
+            .try_send(MprisUpdate::SetPosition(position));
     }
 
     pub fn set_volume(&self, volume: f32) {

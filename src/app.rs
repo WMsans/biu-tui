@@ -225,6 +225,7 @@ impl App {
                         library.prev_item(&self.playing_list);
                     }
                     KeyCode::Enter => {
+                        let old_now_playing = library.now_playing.clone();
                         if let Err(e) = library.handle_enter(
                             self.client.clone(),
                             &mut self.player,
@@ -232,7 +233,10 @@ impl App {
                         ) {
                             eprintln!("Failed to handle enter: {}", e);
                         }
+                        // Extract now_playing info before releasing library borrow
+                        let new_now_playing = library.now_playing.clone();
                         self.apply_volume();
+                        self.notify_mpris_if_playback_changed(&old_now_playing, &new_now_playing);
                     }
                     KeyCode::Esc | KeyCode::Backspace => library.go_back(),
                     KeyCode::Char('a') => {
@@ -252,6 +256,7 @@ impl App {
                         }
                     }
                     KeyCode::Char('d') => {
+                        let old_now_playing = library.now_playing.clone();
                         if let Err(e) = library.handle_remove_song(
                             self.playing_list.clone(),
                             self.client.clone(),
@@ -259,6 +264,8 @@ impl App {
                         ) {
                             eprintln!("Failed to remove song: {}", e);
                         }
+                        let new_now_playing = library.now_playing.clone();
+                        self.notify_mpris_if_playback_changed(&old_now_playing, &new_now_playing);
                     }
                     KeyCode::Char('s') => {
                         self.previous_library = Some((**library).clone());
@@ -427,10 +434,13 @@ impl App {
         }
 
         if let Some(p) = &mut self.player {
+            if let Some(mpris) = &self.mpris {
+                mpris.set_track(item);
+            }
+
             p.play(&audio_stream.url)?;
 
             if let Some(mpris) = &self.mpris {
-                mpris.set_track(item);
                 mpris.set_state(PlayerState::Playing);
             }
 
@@ -641,6 +651,35 @@ impl App {
     fn apply_volume(&mut self) {
         if let Some(player) = &self.player {
             player.set_volume(self.settings.volume_float());
+        }
+    }
+
+    /// Notify MPRIS when playback state changes from library operations.
+    /// Compares old and new `now_playing` to detect if a new track started
+    /// or playback stopped.
+    fn notify_mpris_if_playback_changed(
+        &self,
+        old: &Option<(String, String)>,
+        new: &Option<(String, String)>,
+    ) {
+        if new == old {
+            return;
+        }
+        if let Some(mpris) = &self.mpris {
+            match new {
+                Some((title, artist)) => {
+                    let duration = self
+                        .player
+                        .as_ref()
+                        .map(|p| p.duration().as_secs() as u32)
+                        .unwrap_or(0);
+                    mpris.set_track_info(title, artist, duration);
+                    mpris.set_state(PlayerState::Playing);
+                }
+                None => {
+                    mpris.set_state(PlayerState::Stopped);
+                }
+            }
         }
     }
 
