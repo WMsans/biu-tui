@@ -96,6 +96,7 @@ pub struct VideoPage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FavoriteResourceListData {
     pub medias: Vec<FavoriteResource>,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

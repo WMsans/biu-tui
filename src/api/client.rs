@@ -133,6 +133,14 @@ impl BilibiliClient {
         response.data.context("Failed to get video info")
     }
 
+    /// Searches for resources within a favorite folder by keyword.
+    ///
+    /// # Arguments
+    /// * `media_id` - The ID of the favorite folder to search in
+    /// * `keyword` - The search keyword to filter resources
+    ///
+    /// # Returns
+    /// A vector of favorite resources matching the keyword
     pub async fn search_folder_resources(
         &self,
         media_id: u64,
@@ -143,25 +151,48 @@ impl BilibiliClient {
             media_id,
             urlencoding::encode(keyword)
         );
-        let response: ApiResponse<FavoriteResourceListData> = self.get(&path).await?;
+        let response: ApiResponse<FavoriteResourceListData> = self
+            .get(&path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to search folder resources: {}", e))?;
         Ok(response.data.map(|d| d.medias).unwrap_or_default())
     }
 
+    /// Searches for videos in the watch later list by keyword.
+    ///
+    /// # Arguments
+    /// * `keyword` - The search keyword to filter watch later items
+    ///
+    /// # Returns
+    /// A vector of watch later items matching the keyword
     pub async fn search_watch_later(&self, keyword: &str) -> Result<Vec<WatchLaterItem>> {
         let path = format!(
             "/x/v2/history/toview/web?key={}&ps=100&pn=1",
             urlencoding::encode(keyword)
         );
-        let response: ApiResponse<WatchLaterListData> = self.get(&path).await?;
+        let response: ApiResponse<WatchLaterListData> = self
+            .get(&path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to search watch later: {}", e))?;
         Ok(response.data.map(|d| d.list).unwrap_or_default())
     }
 
+    /// Searches for videos in the viewing history by keyword.
+    ///
+    /// # Arguments
+    /// * `keyword` - The search keyword to filter history items
+    ///
+    /// # Returns
+    /// A vector of history items matching the keyword
     pub async fn search_history(&self, keyword: &str) -> Result<Vec<HistoryItem>> {
         let path = format!(
             "/x/web-interface/history/search?keyword={}&ps=100&pn=1",
             urlencoding::encode(keyword)
         );
-        let response: ApiResponse<HistorySearchData> = self.get(&path).await?;
+        let response: ApiResponse<HistorySearchData> = self
+            .get(&path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to search history: {}", e))?;
         Ok(response.data.map(|d| d.list).unwrap_or_default())
     }
 }
