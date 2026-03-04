@@ -147,7 +147,7 @@ impl BilibiliClient {
         keyword: &str,
     ) -> Result<Vec<FavoriteResource>> {
         let path = format!(
-            "/x/v3/fav/resource/list?media_id={}&keyword={}&ps=100&pn=1",
+            "/x/v3/fav/resource/list?media_id={}&keyword={}&ps=20&pn=1",
             media_id,
             urlencoding::encode(keyword)
         );
@@ -155,7 +155,7 @@ impl BilibiliClient {
             .get(&path)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to search folder resources: {}", e))?;
-        Ok(response.data.map(|d| d.medias).unwrap_or_default())
+        Ok(response.data.and_then(|d| d.medias).unwrap_or_default())
     }
 
     /// Searches for videos in the watch later list by keyword.
@@ -174,7 +174,7 @@ impl BilibiliClient {
             .get(&path)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to search watch later: {}", e))?;
-        Ok(response.data.map(|d| d.list).unwrap_or_default())
+        Ok(response.data.and_then(|d| d.list).unwrap_or_default())
     }
 
     /// Searches for videos in the viewing history by keyword.
@@ -193,6 +193,6 @@ impl BilibiliClient {
             .get(&path)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to search history: {}", e))?;
-        Ok(response.data.map(|d| d.list).unwrap_or_default())
+        Ok(response.data.and_then(|d| d.list).unwrap_or_default())
     }
 }

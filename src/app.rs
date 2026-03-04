@@ -41,7 +41,6 @@ pub struct App {
     previous_library: Option<LibraryScreen>,
     previous_player_state: Option<PlayerState>,
     mpris: Option<MprisManager>,
-    last_search_time: Option<Instant>,
 }
 
 impl App {
@@ -120,7 +119,6 @@ impl App {
             previous_library: None,
             previous_player_state: None,
             mpris,
-            last_search_time: None,
         })
     }
 
@@ -222,22 +220,20 @@ impl App {
                             return Ok(());
                         }
                         KeyCode::Enter => {
+                            self.perform_search()?;
                             self.exit_search_mode(false)?;
                             return Ok(());
                         }
                         KeyCode::Char('u') if _modifiers.contains(KeyModifiers::CONTROL) => {
                             search_state.clear();
-                            self.perform_search()?;
                             return Ok(());
                         }
                         KeyCode::Backspace => {
                             search_state.pop_char();
-                            self.perform_search()?;
                             return Ok(());
                         }
                         KeyCode::Char(c) => {
                             search_state.push_char(c);
-                            self.perform_search()?;
                             return Ok(());
                         }
                         _ => {}
@@ -423,28 +419,6 @@ impl App {
         if let Screen::Library(library) = &mut self.screen {
             if let Some(ref search_state) = library.search_state {
                 let query = search_state.query.trim();
-
-                let needs_api_call = matches!(
-                    library.current_tab,
-                    LibraryTab::Favorites
-                        if matches!(library.nav_level, NavigationLevel::Videos { .. })
-                ) || matches!(
-                    library.current_tab,
-                    LibraryTab::WatchLater | LibraryTab::History
-                );
-
-                if needs_api_call {
-                    let should_search = self
-                        .last_search_time
-                        .map(|last| last.elapsed() >= Duration::from_millis(300))
-                        .unwrap_or(true);
-
-                    if !should_search {
-                        return Ok(());
-                    }
-
-                    self.last_search_time = Some(Instant::now());
-                }
 
                 if query.is_empty() {
                     if let Some(original) = &library.original_folders {

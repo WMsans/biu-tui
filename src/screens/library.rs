@@ -425,7 +425,7 @@ impl LibraryScreen {
             (msg.clone(), Style::default().fg(Color::Green))
         } else if self.search_state.is_some() {
             (
-                "[/] Search  [Esc] Exit search  [Enter] Keep results  [Ctrl+U] Clear".to_string(),
+                "[Enter] Search  [Esc] Cancel  [Ctrl+U] Clear".to_string(),
                 Style::default(),
             )
         } else {

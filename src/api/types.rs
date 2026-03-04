@@ -95,16 +95,16 @@ pub struct VideoPage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FavoriteResourceListData {
-    pub medias: Vec<FavoriteResource>,
+    pub medias: Option<Vec<FavoriteResource>>,
     pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatchLaterListData {
-    pub list: Vec<WatchLaterItem>,
+    pub list: Option<Vec<WatchLaterItem>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistorySearchData {
-    pub list: Vec<HistoryItem>,
+    pub list: Option<Vec<HistoryItem>>,
 }
