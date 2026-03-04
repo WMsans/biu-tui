@@ -49,11 +49,7 @@ impl AudioDecoder {
             .context("Failed to create audio decoder")?;
 
         let filter_graph = if (speed - 1.0).abs() > f32::EPSILON {
-            Some(build_atempo_filter_graph(
-                &decoder,
-                speed,
-                output_sample_rate,
-            )?)
+            Some(build_atempo_filter_graph(&decoder, speed)?)
         } else {
             None
         };
@@ -229,7 +225,6 @@ fn resample_and_collect(
 fn build_atempo_filter_graph(
     decoder: &ffmpeg::decoder::Audio,
     speed: f32,
-    output_sample_rate: u32,
 ) -> Result<ffmpeg::filter::Graph> {
     let mut graph = ffmpeg::filter::Graph::new();
 
@@ -252,14 +247,9 @@ fn build_atempo_filter_graph(
 
     let mut ctx_in = graph.add(&abuffer, "in", &in_args)?;
     let mut ctx_atempo = graph.add(&atempo, "atempo", &format!("tempo={}", speed))?;
-    let mut ctx_out = graph.add(
-        &abuffersink,
-        "out",
-        &format!(
-            "sample_fmts=s16:sample_rates={}:channel_layouts=stereo",
-            output_sample_rate
-        ),
-    )?;
+    // abuffersink accepts no generic string options in FFmpeg 8.x;
+    // format conversion is handled by the downstream resampler.
+    let mut ctx_out = graph.add(&abuffersink, "out", "")?;
 
     ctx_in.link(0, &mut ctx_atempo, 0);
     ctx_atempo.link(0, &mut ctx_out, 0);
