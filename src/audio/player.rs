@@ -102,6 +102,7 @@ impl AudioPlayer {
                 sample_rate,
                 speed_for_thread,
             ) {
+                // Decoder created successfully
                 *duration_arc.lock() = decoder.duration();
 
                 let mut total_samples_decoded: u64 = 0;
@@ -152,6 +153,7 @@ impl AudioPlayer {
                             break;
                         }
                         Err(_) => {
+                            *state.lock() = PlayerState::Stopped;
                             break;
                         }
                     }
@@ -163,11 +165,18 @@ impl AudioPlayer {
                         std::thread::sleep(Duration::from_millis(10));
                     }
                 }
+            } else {
+                // Decoder creation failed; signal stop so the main thread
+                // doesn't block forever waiting for the buffer to fill.
+                *state.lock() = PlayerState::Stopped;
             }
         });
 
         let initial_buffer_size = buffer_size / 4;
         loop {
+            if *self.state.lock() == PlayerState::Stopped {
+                break;
+            }
             let current_size = self.audio_buffer.lock().len();
             if current_size >= initial_buffer_size {
                 break;
