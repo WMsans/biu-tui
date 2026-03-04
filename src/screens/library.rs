@@ -62,6 +62,12 @@ pub struct LibraryScreen {
     pub has_more_history: bool,
     pub is_loading_more: bool,
     visible_height: usize,
+    pub search_state: Option<crate::screens::SearchState>,
+    pub original_folders: Option<Vec<FavoriteFolder>>,
+    pub original_resources: Option<Vec<FavoriteResource>>,
+    pub original_episodes: Option<Vec<crate::api::VideoPage>>,
+    pub original_watch_later: Option<Vec<WatchLaterItem>>,
+    pub original_history: Option<Vec<HistoryItem>>,
 }
 
 impl Default for LibraryScreen {
@@ -91,6 +97,12 @@ impl LibraryScreen {
             has_more_history: true,
             is_loading_more: false,
             visible_height: 0,
+            search_state: None,
+            original_folders: None,
+            original_resources: None,
+            original_episodes: None,
+            original_watch_later: None,
+            original_history: None,
         }
     }
 
