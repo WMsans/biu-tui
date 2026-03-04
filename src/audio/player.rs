@@ -20,7 +20,7 @@ pub struct AudioPlayer {
     duration: Arc<Mutex<Duration>>,
     volume: Arc<Mutex<f32>>,
     sample_rate: Arc<Mutex<u32>>,
-    _stream: Option<cpal::Stream>,
+    stream: Arc<Mutex<Option<cpal::Stream>>>,
     audio_buffer: Arc<Mutex<VecDeque<i16>>>,
     _decoder_thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -30,6 +30,7 @@ fn buffer_size_for_sample_rate(sample_rate: u32) -> usize {
 }
 
 impl AudioPlayer {
+    #[allow(clippy::arc_with_non_send_sync)]
     pub fn new() -> Result<Self> {
         Ok(Self {
             state: Arc::new(Mutex::new(PlayerState::Stopped)),
@@ -37,7 +38,7 @@ impl AudioPlayer {
             duration: Arc::new(Mutex::new(Duration::ZERO)),
             volume: Arc::new(Mutex::new(1.0)),
             sample_rate: Arc::new(Mutex::new(44100)),
-            _stream: None,
+            stream: Arc::new(Mutex::new(None)),
             audio_buffer: Arc::new(Mutex::new(VecDeque::new())),
             _decoder_thread: None,
         })
@@ -199,7 +200,7 @@ impl AudioPlayer {
         )?;
 
         stream.play()?;
-        self._stream = Some(stream);
+        *self.stream.lock() = Some(stream);
         self._decoder_thread = Some(decoder_thread);
 
         Ok(())
@@ -207,15 +208,21 @@ impl AudioPlayer {
 
     pub fn pause(&self) {
         *self.state.lock() = PlayerState::Paused;
+        if let Some(stream) = self.stream.lock().as_ref() {
+            let _ = stream.pause();
+        }
     }
 
     pub fn resume(&self) {
         *self.state.lock() = PlayerState::Playing;
+        if let Some(stream) = self.stream.lock().as_ref() {
+            let _ = stream.play();
+        }
     }
 
     pub fn stop(&mut self) {
         *self.state.lock() = PlayerState::Stopped;
-        self._stream = None;
+        *self.stream.lock() = None;
         if let Some(thread) = self._decoder_thread.take() {
             let _ = thread.join();
         }
