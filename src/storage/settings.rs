@@ -40,6 +40,7 @@ impl LoopMode {
 pub struct Settings {
     pub volume: u32,
     pub loop_mode: LoopMode,
+    pub playback_speed: f32,
 }
 
 impl Default for Settings {
@@ -47,6 +48,7 @@ impl Default for Settings {
         Self {
             volume: 100,
             loop_mode: LoopMode::default(),
+            playback_speed: 1.0,
         }
     }
 }
@@ -102,6 +104,21 @@ impl Settings {
     pub fn volume_float(&self) -> f32 {
         self.volume as f32 / 100.0
     }
+
+    pub fn speed_up(&mut self) {
+        self.playback_speed = (self.playback_speed + 0.1).min(2.0);
+        let _ = self.save();
+    }
+
+    pub fn speed_down(&mut self) {
+        self.playback_speed = (self.playback_speed - 0.1).max(0.5);
+        let _ = self.save();
+    }
+
+    pub fn set_playback_speed(&mut self, speed: f32) {
+        self.playback_speed = speed.clamp(0.5, 2.0);
+        let _ = self.save();
+    }
 }
 
 #[cfg(test)]
@@ -120,5 +137,58 @@ mod tests {
         assert_eq!(LoopMode::LoopOne.prev(), LoopMode::LoopList);
         assert_eq!(LoopMode::NoLoop.prev(), LoopMode::LoopOne);
         assert_eq!(LoopMode::LoopList.prev(), LoopMode::NoLoop);
+    }
+
+    #[test]
+    fn test_playback_speed_default() {
+        let settings = Settings::default();
+        assert_eq!(settings.playback_speed, 1.0);
+    }
+
+    #[test]
+    fn test_playback_speed_up_increments_correctly() {
+        let mut settings = Settings::default();
+        settings.playback_speed = 1.0;
+        settings.speed_up();
+        assert_eq!(settings.playback_speed, 1.1);
+    }
+
+    #[test]
+    fn test_playback_speed_down_decrements_correctly() {
+        let mut settings = Settings::default();
+        settings.playback_speed = 1.5;
+        settings.speed_down();
+        assert_eq!(settings.playback_speed, 1.4);
+    }
+
+    #[test]
+    fn test_playback_speed_clamped_to_max() {
+        let mut settings = Settings::default();
+        settings.playback_speed = 1.95;
+        settings.speed_up();
+        assert_eq!(settings.playback_speed, 2.0);
+        settings.speed_up();
+        assert_eq!(settings.playback_speed, 2.0);
+    }
+
+    #[test]
+    fn test_playback_speed_clamped_to_min() {
+        let mut settings = Settings::default();
+        settings.playback_speed = 0.55;
+        settings.speed_down();
+        assert_eq!(settings.playback_speed, 0.5);
+        settings.speed_down();
+        assert_eq!(settings.playback_speed, 0.5);
+    }
+
+    #[test]
+    fn test_playback_speed_serialization() {
+        let mut settings = Settings::default();
+        settings.playback_speed = 1.5;
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("\"playback_speed\":1.5"));
+
+        let deserialized: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.playback_speed, 1.5);
     }
 }

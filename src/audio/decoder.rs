@@ -8,6 +8,9 @@ pub struct AudioDecoder {
     input: ffmpeg::format::context::Input,
     stream_index: usize,
     output_sample_rate: u32,
+    #[allow(dead_code)]
+    playback_speed: f32,
+    filter_graph: Option<ffmpeg::filter::Graph>,
 }
 
 impl AudioDecoder {
@@ -16,6 +19,15 @@ impl AudioDecoder {
     }
 
     pub fn from_url_with_sample_rate(url: &str, output_sample_rate: u32) -> Result<Self> {
+        Self::from_url_with_sample_rate_and_speed(url, output_sample_rate, 1.0)
+    }
+
+    pub fn from_url_with_sample_rate_and_speed(
+        url: &str,
+        output_sample_rate: u32,
+        speed: f32,
+    ) -> Result<Self> {
+        let speed = speed.clamp(0.5, 2.0);
         ffmpeg::init()?;
 
         let mut options = ffmpeg::Dictionary::new();
@@ -36,6 +48,16 @@ impl AudioDecoder {
             .audio()
             .context("Failed to create audio decoder")?;
 
+        let filter_graph = if (speed - 1.0).abs() > f32::EPSILON {
+            Some(build_atempo_filter_graph(
+                &decoder,
+                speed,
+                output_sample_rate,
+            )?)
+        } else {
+            None
+        };
+
         let resampler = ffmpeg::software::resampling::context::Context::get(
             decoder.format(),
             decoder.channel_layout(),
@@ -51,6 +73,8 @@ impl AudioDecoder {
             input: ictx,
             stream_index,
             output_sample_rate,
+            playback_speed: speed,
+            filter_graph,
         })
     }
 
@@ -76,6 +100,14 @@ impl AudioDecoder {
     }
 
     pub fn decode_next(&mut self) -> Result<Option<Vec<i16>>> {
+        if self.filter_graph.is_some() {
+            self.decode_next_with_filter()
+        } else {
+            self.decode_next_simple()
+        }
+    }
+
+    fn decode_next_simple(&mut self) -> Result<Option<Vec<i16>>> {
         for (stream, packet) in self.input.packets() {
             if stream.index() == self.stream_index {
                 self.decoder.send_packet(&packet)?;
@@ -101,14 +133,68 @@ impl AudioDecoder {
 
         Ok(None)
     }
+
+    fn decode_next_with_filter(&mut self) -> Result<Option<Vec<i16>>> {
+        let filter_graph = self
+            .filter_graph
+            .as_mut()
+            .context("Filter graph not initialized")?;
+
+        let mut src = filter_graph
+            .get("in")
+            .context("Failed to get filter source")?;
+        let mut sink = filter_graph
+            .get("out")
+            .context("Failed to get filter sink")?;
+
+        for (stream, packet) in self.input.packets() {
+            if stream.index() == self.stream_index {
+                self.decoder.send_packet(&packet)?;
+
+                let mut decoded = ffmpeg::frame::Audio::empty();
+                while self.decoder.receive_frame(&mut decoded).is_ok() {
+                    src.source().add(&decoded)?;
+
+                    let mut filtered = ffmpeg::frame::Audio::empty();
+                    while sink.sink().frame(&mut filtered).is_ok() {
+                        let samples = resample_and_collect(&mut self.resampler, &filtered)?;
+                        if !samples.is_empty() {
+                            return Ok(Some(samples));
+                        }
+                    }
+                }
+            }
+        }
+
+        self.decoder.send_eof()?;
+        let mut decoded = ffmpeg::frame::Audio::empty();
+        while self.decoder.receive_frame(&mut decoded).is_ok() {
+            src.source().add(&decoded)?;
+
+            let mut filtered = ffmpeg::frame::Audio::empty();
+            while sink.sink().frame(&mut filtered).is_ok() {
+                let samples = resample_and_collect(&mut self.resampler, &filtered)?;
+                if !samples.is_empty() {
+                    return Ok(Some(samples));
+                }
+            }
+        }
+
+        src.source().close(0)?;
+        let mut filtered = ffmpeg::frame::Audio::empty();
+        while sink.sink().frame(&mut filtered).is_ok() {
+            let samples = resample_and_collect(&mut self.resampler, &filtered)?;
+            if !samples.is_empty() {
+                return Ok(Some(samples));
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 fn extract_samples(frame: &ffmpeg::frame::Audio) -> Vec<i16> {
     let data = frame.data(0);
-    // data(0) returns a slice sized by linesize[0], which may include
-    // alignment padding beyond the actual sample data. Use nb_samples
-    // to compute the exact number of valid bytes.
-    // For packed stereo i16: valid_bytes = nb_samples * 2 channels * 2 bytes_per_sample
     let valid_bytes = frame.samples() * frame.channels() as usize * 2;
     let valid_data = &data[..valid_bytes.min(data.len())];
     valid_data
@@ -127,7 +213,6 @@ fn resample_and_collect(
     let delay = resampler.run(decoded, &mut resampled)?;
     all_samples.extend(extract_samples(&resampled));
 
-    // Flush any remaining samples buffered inside the resampler
     if delay.is_some() {
         loop {
             let mut flushed = ffmpeg::frame::Audio::empty();
@@ -139,4 +224,49 @@ fn resample_and_collect(
     }
 
     Ok(all_samples)
+}
+
+fn build_atempo_filter_graph(
+    decoder: &ffmpeg::decoder::Audio,
+    speed: f32,
+    output_sample_rate: u32,
+) -> Result<ffmpeg::filter::Graph> {
+    let mut graph = ffmpeg::filter::Graph::new();
+
+    let sample_fmt = decoder.format();
+    let sample_rate = decoder.rate();
+    let channel_layout = decoder.channel_layout();
+
+    let in_args = format!(
+        "time_base=1/{}:sample_rate={}:sample_fmt={}:channel_layout=0x{:x}",
+        sample_rate,
+        sample_rate,
+        sample_fmt.name(),
+        channel_layout.bits()
+    );
+
+    let abuffer = ffmpeg::filter::find("abuffer").context("Could not find abuffer filter")?;
+    let atempo = ffmpeg::filter::find("atempo").context("Could not find atempo filter")?;
+    let abuffersink =
+        ffmpeg::filter::find("abuffersink").context("Could not find abuffersink filter")?;
+
+    let mut ctx_in = graph.add(&abuffer, "in", &in_args)?;
+    let mut ctx_atempo = graph.add(&atempo, "atempo", &format!("tempo={}", speed))?;
+    let mut ctx_out = graph.add(
+        &abuffersink,
+        "out",
+        &format!(
+            "sample_fmts=s16:sample_rates={}:channel_layouts=stereo",
+            output_sample_rate
+        ),
+    )?;
+
+    ctx_in.link(0, &mut ctx_atempo, 0);
+    ctx_atempo.link(0, &mut ctx_out, 0);
+
+    graph
+        .validate()
+        .context("Failed to validate filter graph")?;
+
+    Ok(graph)
 }

@@ -9,13 +9,15 @@ use ratatui::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingItem {
     Volume,
+    PlaybackSpeed,
     LoopMode,
 }
 
 impl SettingItem {
     pub fn next(self) -> Self {
         match self {
-            SettingItem::Volume => SettingItem::LoopMode,
+            SettingItem::Volume => SettingItem::PlaybackSpeed,
+            SettingItem::PlaybackSpeed => SettingItem::LoopMode,
             SettingItem::LoopMode => SettingItem::Volume,
         }
     }
@@ -23,7 +25,8 @@ impl SettingItem {
     pub fn prev(self) -> Self {
         match self {
             SettingItem::Volume => SettingItem::LoopMode,
-            SettingItem::LoopMode => SettingItem::Volume,
+            SettingItem::LoopMode => SettingItem::PlaybackSpeed,
+            SettingItem::PlaybackSpeed => SettingItem::Volume,
         }
     }
 }
@@ -78,14 +81,36 @@ impl SettingsScreen {
             Self::format_volume_bar(settings.volume),
             settings.volume
         );
+        let speed_text = format!(
+            "Playback Speed {}  {:.1}x",
+            Self::format_speed_bar(settings.playback_speed),
+            settings.playback_speed
+        );
         let loop_text = format!("Loop Mode     {}", settings.loop_mode.display_name());
 
-        vec![ListItem::new(volume_text), ListItem::new(loop_text)]
+        vec![
+            ListItem::new(volume_text),
+            ListItem::new(speed_text),
+            ListItem::new(loop_text),
+        ]
     }
 
     fn format_volume_bar(volume: u32) -> String {
         let bar_width = 20;
         let filled = (bar_width as f32 * (volume as f32 / 100.0)) as usize;
+        let filled = filled.min(bar_width);
+        let empty = bar_width - filled;
+
+        let filled_chars: String = std::iter::repeat_n('█', filled).collect();
+        let empty_chars: String = std::iter::repeat_n('░', empty).collect();
+        format!("{}{}", filled_chars, empty_chars)
+    }
+
+    fn format_speed_bar(speed: f32) -> String {
+        let bar_width = 20;
+        // Map speed from 0.5-2.0 range to 0-20
+        let normalized = (speed - 0.5) / 1.5; // 0.5 to 2.0 is range of 1.5
+        let filled = (bar_width as f32 * normalized) as usize;
         let filled = filled.min(bar_width);
         let empty = bar_width - filled;
 
@@ -107,6 +132,7 @@ impl SettingsScreen {
     pub fn adjust_up(&mut self) {
         match self.selected_item {
             SettingItem::Volume => self.settings.volume_up(),
+            SettingItem::PlaybackSpeed => self.settings.speed_up(),
             SettingItem::LoopMode => self.settings.next_loop_mode(),
         }
     }
@@ -114,7 +140,32 @@ impl SettingsScreen {
     pub fn adjust_down(&mut self) {
         match self.selected_item {
             SettingItem::Volume => self.settings.volume_down(),
+            SettingItem::PlaybackSpeed => self.settings.speed_down(),
             SettingItem::LoopMode => self.settings.prev_loop_mode(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_setting_item_navigation_with_three_items() {
+        assert_eq!(SettingItem::Volume.next(), SettingItem::PlaybackSpeed);
+        assert_eq!(SettingItem::PlaybackSpeed.next(), SettingItem::LoopMode);
+        assert_eq!(SettingItem::LoopMode.next(), SettingItem::Volume);
+
+        assert_eq!(SettingItem::Volume.prev(), SettingItem::LoopMode);
+        assert_eq!(SettingItem::LoopMode.prev(), SettingItem::PlaybackSpeed);
+        assert_eq!(SettingItem::PlaybackSpeed.prev(), SettingItem::Volume);
+    }
+
+    #[test]
+    fn test_settings_screen_includes_playback_speed() {
+        let settings = Settings::default();
+        let screen = SettingsScreen::new(settings);
+        let items = SettingsScreen::build_items(&screen.settings);
+        assert_eq!(items.len(), 3);
     }
 }

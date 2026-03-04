@@ -20,6 +20,7 @@ pub struct AudioPlayer {
     duration: Arc<Mutex<Duration>>,
     volume: Arc<Mutex<f32>>,
     sample_rate: Arc<Mutex<u32>>,
+    playback_speed: Arc<Mutex<f32>>,
     stream: Arc<Mutex<Option<cpal::Stream>>>,
     audio_buffer: Arc<Mutex<VecDeque<i16>>>,
     _decoder_thread: Option<std::thread::JoinHandle<()>>,
@@ -38,6 +39,7 @@ impl AudioPlayer {
             duration: Arc::new(Mutex::new(Duration::ZERO)),
             volume: Arc::new(Mutex::new(1.0)),
             sample_rate: Arc::new(Mutex::new(44100)),
+            playback_speed: Arc::new(Mutex::new(1.0)),
             stream: Arc::new(Mutex::new(None)),
             audio_buffer: Arc::new(Mutex::new(VecDeque::new())),
             _decoder_thread: None,
@@ -64,7 +66,16 @@ impl AudioPlayer {
         *self.volume.lock() = vol.clamp(0.0, 1.0);
     }
 
-    pub fn play(&mut self, url: &str) -> Result<()> {
+    pub fn playback_speed(&self) -> f32 {
+        *self.playback_speed.lock()
+    }
+
+    pub fn set_playback_speed(&self, speed: f32) {
+        *self.playback_speed.lock() = speed.clamp(0.5, 2.0);
+    }
+
+    pub fn play(&mut self, url: &str, speed: f32) -> Result<()> {
+        self.set_playback_speed(speed);
         self.stop();
 
         let host = cpal::default_host();
@@ -83,11 +94,14 @@ impl AudioPlayer {
         let url_owned = url.to_string();
         let duration_arc = self.duration.clone();
         let position_arc = self.position.clone();
+        let speed_for_thread = *self.playback_speed.lock();
 
         let decoder_thread = std::thread::spawn(move || {
-            if let Ok(mut decoder) =
-                AudioDecoder::from_url_with_sample_rate(&url_owned, sample_rate)
-            {
+            if let Ok(mut decoder) = AudioDecoder::from_url_with_sample_rate_and_speed(
+                &url_owned,
+                sample_rate,
+                speed_for_thread,
+            ) {
                 *duration_arc.lock() = decoder.duration();
 
                 let mut total_samples_decoded: u64 = 0;
