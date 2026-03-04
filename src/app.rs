@@ -10,11 +10,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::api::BilibiliClient;
+use crate::api::FavoriteFolder;
 use crate::audio::{AudioPlayer, PlayerState};
 use crate::download::DownloadManager;
 use crate::mpris::{MprisCommand, MprisManager};
 use crate::playing_list::{PlayingListManager, PlaylistItem};
-use crate::screens::{LibraryScreen, LibraryTab, LoginScreen, LoginState, SettingsScreen};
+use crate::screens::library::NavigationLevel;
+use crate::screens::{
+    LibraryScreen, LibraryTab, LoginScreen, LoginState, Searchable, SettingsScreen,
+};
 use crate::storage::{Config, CookieStorage, LoopMode, Settings};
 
 pub enum Screen {
@@ -207,7 +211,43 @@ impl App {
             Screen::Library(library) => {
                 // Clear status message on any keypress
                 library.status_message = None;
+
+                // Handle search input if in search mode
+                if let Some(ref mut search_state) = library.search_state {
+                    match code {
+                        KeyCode::Esc => {
+                            self.exit_search_mode(true)?;
+                            return Ok(());
+                        }
+                        KeyCode::Enter => {
+                            self.exit_search_mode(false)?;
+                            return Ok(());
+                        }
+                        KeyCode::Char('u') if _modifiers.contains(KeyModifiers::CONTROL) => {
+                            search_state.clear();
+                            self.perform_search()?;
+                            return Ok(());
+                        }
+                        KeyCode::Backspace => {
+                            search_state.pop_char();
+                            self.perform_search()?;
+                            return Ok(());
+                        }
+                        KeyCode::Char(c) => {
+                            search_state.push_char(c);
+                            self.perform_search()?;
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+
                 match code {
+                    KeyCode::Char('/') => {
+                        if library.search_state.is_none() {
+                            self.enter_search_mode()?;
+                        }
+                    }
                     KeyCode::Char('q') => self.running = false,
                     KeyCode::Tab => {
                         library.current_tab = match library.current_tab {
@@ -350,6 +390,130 @@ impl App {
             library.original_episodes = None;
             library.original_watch_later = None;
             library.original_history = None;
+        }
+        Ok(())
+    }
+
+    fn perform_search(&mut self) -> Result<()> {
+        if let Screen::Library(library) = &mut self.screen {
+            if let Some(ref search_state) = library.search_state {
+                let query = search_state.query.trim();
+
+                if query.is_empty() {
+                    if let Some(original) = &library.original_folders {
+                        library.folders = original.clone();
+                    }
+                    if let Some(original) = &library.original_resources {
+                        library.resources = original.clone();
+                    }
+                    if let Some(original) = &library.original_episodes {
+                        library.episodes = original.clone();
+                    }
+                    if let Some(original) = &library.original_watch_later {
+                        library.watch_later = original.clone();
+                    }
+                    if let Some(original) = &library.original_history {
+                        library.history = original.clone();
+                    }
+                    return Ok(());
+                }
+
+                match library.current_tab {
+                    LibraryTab::Favorites => match &library.nav_level {
+                        NavigationLevel::Folders => {
+                            if let Some(original) = &library.original_folders {
+                                library.folders = original
+                                    .iter()
+                                    .filter(|f| f.matches(query))
+                                    .cloned()
+                                    .collect();
+                            }
+                        }
+                        NavigationLevel::Videos { folder_id, .. } => {
+                            let folder_id = *folder_id;
+                            let client = self.client.clone();
+                            let keyword = query.to_string();
+
+                            let results = {
+                                let c = client.lock();
+                                let rt = tokio::runtime::Runtime::new()?;
+                                rt.block_on(c.search_folder_resources(folder_id, &keyword))
+                            };
+
+                            match results {
+                                Ok(resources) => {
+                                    library.resources = resources;
+                                }
+                                Err(e) => {
+                                    library.status_message = Some(format!("Search failed: {}", e));
+                                }
+                            }
+                        }
+                        NavigationLevel::Episodes { .. } => {
+                            if let Some(original) = &library.original_episodes {
+                                library.episodes = original
+                                    .iter()
+                                    .filter(|ep| ep.matches(query))
+                                    .cloned()
+                                    .collect();
+                            }
+                        }
+                    },
+                    LibraryTab::WatchLater => {
+                        let client = self.client.clone();
+                        let keyword = query.to_string();
+
+                        let results = {
+                            let c = client.lock();
+                            let rt = tokio::runtime::Runtime::new()?;
+                            rt.block_on(c.search_watch_later(&keyword))
+                        };
+
+                        match results {
+                            Ok(items) => {
+                                library.watch_later = items;
+                            }
+                            Err(e) => {
+                                library.status_message = Some(format!("Search failed: {}", e));
+                            }
+                        }
+                    }
+                    LibraryTab::History => {
+                        let client = self.client.clone();
+                        let keyword = query.to_string();
+
+                        let results = {
+                            let c = client.lock();
+                            let rt = tokio::runtime::Runtime::new()?;
+                            rt.block_on(c.search_history(&keyword))
+                        };
+
+                        match results {
+                            Ok(items) => {
+                                library.history = items;
+                            }
+                            Err(e) => {
+                                library.status_message = Some(format!("Search failed: {}", e));
+                            }
+                        }
+                    }
+                    LibraryTab::PlayingList => {
+                        let playing_list = self.playing_list.lock();
+                        let items = playing_list.items();
+                        library.folders = items
+                            .iter()
+                            .filter(|item| item.matches(query))
+                            .map(|item| FavoriteFolder {
+                                id: 0,
+                                title: format!("{} - {}", item.title, item.artist),
+                                media_count: 1,
+                            })
+                            .collect();
+                    }
+                }
+
+                library.list_state.select(Some(0));
+            }
         }
         Ok(())
     }

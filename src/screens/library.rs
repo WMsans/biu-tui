@@ -3,6 +3,7 @@ use crate::api::{FavoriteFolder, FavoriteResource};
 use crate::audio::AudioPlayer;
 use crate::playing_list::{PlayingListManager, PlaylistItem};
 use crate::storage::LoopMode;
+use crate::ui::widgets::SearchBar;
 use parking_lot::Mutex;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -207,16 +208,22 @@ impl LibraryScreen {
         player: Option<&AudioPlayer>,
         playing_list: Arc<Mutex<PlayingListManager>>,
     ) {
+        let mut constraints = vec![Constraint::Length(3), Constraint::Length(1)];
+
+        if self.search_state.is_some() {
+            constraints.push(Constraint::Length(3));
+        }
+
+        constraints.extend(vec![
+            Constraint::Min(10),
+            Constraint::Length(2),
+            Constraint::Length(2),
+            Constraint::Length(2),
+        ]);
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Length(1),
-                Constraint::Min(10),
-                Constraint::Length(2), // now playing: 1 for border + 1 for content
-                Constraint::Length(2), // progress bar: 1 for border + 1 for content
-                Constraint::Length(2), // help bar: 1 for border + 1 for content
-            ])
+            .constraints(constraints)
             .split(area);
 
         let titles: Vec<&str> = vec!["Favorites", "Watch Later", "History", "Playing List"];
@@ -242,6 +249,14 @@ impl LibraryScreen {
         };
         let breadcrumb = Paragraph::new(breadcrumb_text).style(Style::default().fg(Color::Yellow));
         f.render_widget(breadcrumb, chunks[1]);
+
+        let mut chunk_offset = 2;
+
+        if let Some(ref search_state) = self.search_state {
+            SearchBar::new(&search_state.query, search_state.cursor_position)
+                .render(f, chunks[chunk_offset]);
+            chunk_offset += 1;
+        }
 
         let items: Vec<ListItem> = match self.current_tab {
             LibraryTab::Favorites => match &self.nav_level {
@@ -333,10 +348,11 @@ impl LibraryScreen {
             .block(Block::default().borders(Borders::ALL))
             .highlight_style(Style::default().bg(Color::DarkGray));
 
-        let visible_height = chunks[2].height.saturating_sub(2) as usize;
+        let visible_height = chunks[chunk_offset].height.saturating_sub(2) as usize;
         self.adjust_scroll_offset(visible_height);
-        f.render_stateful_widget(list, chunks[2], &mut self.list_state);
+        f.render_stateful_widget(list, chunks[chunk_offset], &mut self.list_state);
         self.visible_height = visible_height;
+        chunk_offset += 1;
 
         let now_playing_text = if let Some((title, artist)) = &self.now_playing {
             format!("♫ Now Playing: {} - {}", title, artist)
@@ -346,7 +362,7 @@ impl LibraryScreen {
         let now_playing = Paragraph::new(now_playing_text)
             .style(Style::default().fg(Color::Cyan))
             .block(Block::default().borders(Borders::TOP));
-        f.render_widget(now_playing, chunks[3]);
+        f.render_widget(now_playing, chunks[chunk_offset]);
 
         use crate::audio::PlayerState;
 
@@ -362,7 +378,7 @@ impl LibraryScreen {
                 0.0
             };
 
-            let width = chunks[4].width as usize;
+            let width = chunks[chunk_offset + 1].width as usize;
             let bar_width = width.saturating_sub(20);
             let filled = (bar_width as f32 * progress) as usize;
             let filled = filled.min(bar_width);
@@ -388,7 +404,7 @@ impl LibraryScreen {
         let progress_bar = Paragraph::new(progress_text)
             .style(Style::default().fg(progress_color))
             .block(Block::default().borders(Borders::TOP));
-        f.render_widget(progress_bar, chunks[4]);
+        f.render_widget(progress_bar, chunks[chunk_offset + 1]);
 
         let (help_text, help_style) = if let Some(msg) = &self.status_message {
             (msg.clone(), Style::default().fg(Color::Green))
@@ -406,7 +422,7 @@ impl LibraryScreen {
         let help = Paragraph::new(help_text)
             .style(help_style)
             .block(Block::default().borders(Borders::TOP));
-        f.render_widget(help, chunks[5]);
+        f.render_widget(help, chunks[chunk_offset + 2]);
     }
 
     pub fn next_item(
