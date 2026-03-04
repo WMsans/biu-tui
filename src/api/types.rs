@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::history::{HistoryItem, WatchLaterItem};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
     pub code: i32,
@@ -89,4 +91,19 @@ pub struct VideoPage {
     pub page: u32,
     pub part: String,
     pub duration: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FavoriteResourceListData {
+    pub medias: Vec<FavoriteResource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatchLaterListData {
+    pub list: Vec<WatchLaterItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistorySearchData {
+    pub list: Vec<HistoryItem>,
 }

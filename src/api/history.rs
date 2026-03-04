@@ -1,7 +1,8 @@
 use crate::api::{ApiResponse, BilibiliClient};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryItem {
     pub aid: u64,
     pub bvid: Option<String>,
@@ -12,7 +13,7 @@ pub struct HistoryItem {
     pub owner: Option<Owner>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatchLaterItem {
     pub bvid: String,
     pub title: String,
@@ -21,7 +22,7 @@ pub struct WatchLaterItem {
     pub owner: Option<Owner>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Owner {
     pub mid: u64,
     pub name: String,

@@ -1,5 +1,5 @@
 use crate::api::types::*;
-use crate::api::UserInfo;
+use crate::api::{HistoryItem, UserInfo, WatchLaterItem};
 use anyhow::{Context, Result};
 use reqwest::{cookie::Jar, Client};
 use std::sync::Arc;
@@ -131,5 +131,37 @@ impl BilibiliClient {
         let path = format!("/x/web-interface/view?bvid={}", bvid);
         let response: ApiResponse<VideoInfo> = self.get(&path).await?;
         response.data.context("Failed to get video info")
+    }
+
+    pub async fn search_folder_resources(
+        &self,
+        media_id: u64,
+        keyword: &str,
+    ) -> Result<Vec<FavoriteResource>> {
+        let path = format!(
+            "/x/v3/fav/resource/list?media_id={}&keyword={}&ps=100&pn=1",
+            media_id,
+            urlencoding::encode(keyword)
+        );
+        let response: ApiResponse<FavoriteResourceListData> = self.get(&path).await?;
+        Ok(response.data.map(|d| d.medias).unwrap_or_default())
+    }
+
+    pub async fn search_watch_later(&self, keyword: &str) -> Result<Vec<WatchLaterItem>> {
+        let path = format!(
+            "/x/v2/history/toview/web?key={}&ps=100&pn=1",
+            urlencoding::encode(keyword)
+        );
+        let response: ApiResponse<WatchLaterListData> = self.get(&path).await?;
+        Ok(response.data.map(|d| d.list).unwrap_or_default())
+    }
+
+    pub async fn search_history(&self, keyword: &str) -> Result<Vec<HistoryItem>> {
+        let path = format!(
+            "/x/web-interface/history/search?keyword={}&ps=100&pn=1",
+            urlencoding::encode(keyword)
+        );
+        let response: ApiResponse<HistorySearchData> = self.get(&path).await?;
+        Ok(response.data.map(|d| d.list).unwrap_or_default())
     }
 }
