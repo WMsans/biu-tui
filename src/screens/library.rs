@@ -344,9 +344,24 @@ impl LibraryScreen {
             }
         };
 
-        let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL))
-            .highlight_style(Style::default().bg(Color::DarkGray));
+        let list = if items.is_empty() {
+            if let Some(ref search_state) = self.search_state {
+                let query = search_state.query.as_str();
+                List::new(vec![ListItem::new(format!(
+                    "No results found for '{}'",
+                    query
+                ))])
+                .block(Block::default().borders(Borders::ALL))
+            } else {
+                List::new(items)
+                    .block(Block::default().borders(Borders::ALL))
+                    .highlight_style(Style::default().bg(Color::DarkGray))
+            }
+        } else {
+            List::new(items)
+                .block(Block::default().borders(Borders::ALL))
+                .highlight_style(Style::default().bg(Color::DarkGray))
+        };
 
         let visible_height = chunks[chunk_offset].height.saturating_sub(2) as usize;
         self.adjust_scroll_offset(visible_height);
@@ -408,13 +423,18 @@ impl LibraryScreen {
 
         let (help_text, help_style) = if let Some(msg) = &self.status_message {
             (msg.clone(), Style::default().fg(Color::Green))
+        } else if self.search_state.is_some() {
+            (
+                "[/] Search  [Esc] Exit search  [Enter] Keep results  [Ctrl+U] Clear".to_string(),
+                Style::default(),
+            )
         } else {
             let text = match self.current_tab {
                 LibraryTab::PlayingList => {
-                    "[j/k] Navigate  [Enter] Jump  [d] Remove  [Tab] Switch"
+                    "[j/k] Navigate  [Enter] Jump  [d] Remove  [Tab] Switch  [/] Search"
                 }
                 _ => {
-                    "[j/k] Navigate  [Enter] Select  [Esc] Back  [s] Settings  [a] Add to list  [A] Add all  [Tab] Switch"
+                    "[j/k] Navigate  [Enter] Select  [Esc] Back  [s] Settings  [a] Add to list  [A] Add all  [Tab] Switch  [/] Search"
                 }
             };
             (text.to_string(), Style::default())

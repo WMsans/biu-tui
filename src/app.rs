@@ -41,6 +41,7 @@ pub struct App {
     previous_library: Option<LibraryScreen>,
     previous_player_state: Option<PlayerState>,
     mpris: Option<MprisManager>,
+    last_search_time: Option<Instant>,
 }
 
 impl App {
@@ -119,6 +120,7 @@ impl App {
             previous_library: None,
             previous_player_state: None,
             mpris,
+            last_search_time: None,
         })
     }
 
@@ -250,6 +252,29 @@ impl App {
                     }
                     KeyCode::Char('q') => self.running = false,
                     KeyCode::Tab => {
+                        if library.search_state.is_some() {
+                            if let Some(original) = library.original_folders.take() {
+                                library.folders = original;
+                            }
+                            if let Some(original) = library.original_resources.take() {
+                                library.resources = original;
+                            }
+                            if let Some(original) = library.original_episodes.take() {
+                                library.episodes = original;
+                            }
+                            if let Some(original) = library.original_watch_later.take() {
+                                library.watch_later = original;
+                            }
+                            if let Some(original) = library.original_history.take() {
+                                library.history = original;
+                            }
+                            library.search_state = None;
+                            library.original_folders = None;
+                            library.original_resources = None;
+                            library.original_episodes = None;
+                            library.original_watch_later = None;
+                            library.original_history = None;
+                        }
                         library.current_tab = match library.current_tab {
                             LibraryTab::Favorites => LibraryTab::WatchLater,
                             LibraryTab::WatchLater => LibraryTab::History,
@@ -398,6 +423,28 @@ impl App {
         if let Screen::Library(library) = &mut self.screen {
             if let Some(ref search_state) = library.search_state {
                 let query = search_state.query.trim();
+
+                let needs_api_call = matches!(
+                    library.current_tab,
+                    LibraryTab::Favorites
+                        if matches!(library.nav_level, NavigationLevel::Videos { .. })
+                ) || matches!(
+                    library.current_tab,
+                    LibraryTab::WatchLater | LibraryTab::History
+                );
+
+                if needs_api_call {
+                    let should_search = self
+                        .last_search_time
+                        .map(|last| last.elapsed() >= Duration::from_millis(300))
+                        .unwrap_or(true);
+
+                    if !should_search {
+                        return Ok(());
+                    }
+
+                    self.last_search_time = Some(Instant::now());
+                }
 
                 if query.is_empty() {
                     if let Some(original) = &library.original_folders {
