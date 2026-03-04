@@ -8,6 +8,7 @@ pub struct AudioDecoder {
     input: ffmpeg::format::context::Input,
     stream_index: usize,
     output_sample_rate: u32,
+    #[allow(dead_code)]
     playback_speed: f32,
     filter_graph: Option<ffmpeg::filter::Graph>,
 }
@@ -96,10 +97,6 @@ impl AudioDecoder {
         } else {
             Duration::ZERO
         }
-    }
-
-    pub fn playback_speed(&self) -> f32 {
-        self.playback_speed
     }
 
     pub fn decode_next(&mut self) -> Result<Option<Vec<i16>>> {
