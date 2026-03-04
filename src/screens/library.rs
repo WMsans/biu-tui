@@ -516,6 +516,7 @@ impl LibraryScreen {
         playing_list: Arc<Mutex<PlayingListManager>>,
         client: Arc<Mutex<BilibiliClient>>,
         player: &mut Option<AudioPlayer>,
+        playback_speed: f32,
     ) -> anyhow::Result<()> {
         if self.current_tab != LibraryTab::PlayingList {
             return Ok(());
@@ -546,7 +547,7 @@ impl LibraryScreen {
         }
 
         if let Some(p) = player {
-            p.play(&audio_stream.url)?;
+            p.play(&audio_stream.url, playback_speed)?;
             self.now_playing = Some((item.title, item.artist));
         }
 
@@ -558,6 +559,7 @@ impl LibraryScreen {
         client: Arc<Mutex<BilibiliClient>>,
         player: &mut Option<AudioPlayer>,
         playing_list: Arc<Mutex<PlayingListManager>>,
+        playback_speed: f32,
     ) -> anyhow::Result<()> {
         match self.current_tab {
             LibraryTab::Favorites => match &self.nav_level {
@@ -570,18 +572,24 @@ impl LibraryScreen {
                 } => {
                     let folder_id = *folder_id;
                     let folder_title = folder_title.clone();
-                    self.select_video_or_episodes(client, player, folder_id, folder_title)?;
+                    self.select_video_or_episodes(
+                        client,
+                        player,
+                        folder_id,
+                        folder_title,
+                        playback_speed,
+                    )?;
                 }
                 NavigationLevel::Episodes { bvid, .. } => {
                     let bvid = bvid.clone();
-                    self.play_episode(client, player, &bvid)?;
+                    self.play_episode(client, player, &bvid, playback_speed)?;
                 }
             },
             LibraryTab::WatchLater | LibraryTab::History => {
-                self.play_selected(client, player)?;
+                self.play_selected(client, player, playback_speed)?;
             }
             LibraryTab::PlayingList => {
-                self.handle_jump_to_song(playing_list, client, player)?;
+                self.handle_jump_to_song(playing_list, client, player, playback_speed)?;
             }
         }
         Ok(())
@@ -620,6 +628,7 @@ impl LibraryScreen {
         player: &mut Option<AudioPlayer>,
         folder_id: u64,
         folder_title: String,
+        playback_speed: f32,
     ) -> anyhow::Result<()> {
         if let Some(idx) = self.list_state.selected() {
             if idx < self.resources.len() {
@@ -645,7 +654,7 @@ impl LibraryScreen {
                     self.list_state.select(Some(0));
                 } else {
                     // Single-page video: play directly
-                    self.play_video(client, player, &video_info)?;
+                    self.play_video(client, player, &video_info, playback_speed)?;
                 }
             }
         }
@@ -657,6 +666,7 @@ impl LibraryScreen {
         client: Arc<Mutex<BilibiliClient>>,
         player: &mut Option<AudioPlayer>,
         bvid: &str,
+        playback_speed: f32,
     ) -> anyhow::Result<()> {
         if let Some(idx) = self.list_state.selected() {
             if idx < self.episodes.len() {
@@ -675,7 +685,7 @@ impl LibraryScreen {
                 }
 
                 if let Some(p) = player {
-                    p.play(&audio_stream.url)?;
+                    p.play(&audio_stream.url, playback_speed)?;
                     // Show the episode title with the video owner name
                     let owner_name = self
                         .current_video_info
@@ -694,6 +704,7 @@ impl LibraryScreen {
         client: Arc<Mutex<BilibiliClient>>,
         player: &mut Option<AudioPlayer>,
         video_info: &crate::api::VideoInfo,
+        playback_speed: f32,
     ) -> anyhow::Result<()> {
         let audio_stream = {
             let client = client.lock();
@@ -706,7 +717,7 @@ impl LibraryScreen {
         }
 
         if let Some(p) = player {
-            p.play(&audio_stream.url)?;
+            p.play(&audio_stream.url, playback_speed)?;
             self.now_playing = Some((video_info.title.clone(), video_info.owner.name.clone()));
         }
 
@@ -717,6 +728,7 @@ impl LibraryScreen {
         &mut self,
         client: Arc<Mutex<BilibiliClient>>,
         player: &mut Option<AudioPlayer>,
+        playback_speed: f32,
     ) -> anyhow::Result<()> {
         let bvid = match self.current_tab {
             LibraryTab::Favorites => {
@@ -761,7 +773,7 @@ impl LibraryScreen {
             }
 
             if let Some(p) = player {
-                p.play(&audio_stream.url)?;
+                p.play(&audio_stream.url, playback_speed)?;
                 self.now_playing = Some((video_info.title, video_info.owner.name));
             }
         }
@@ -1089,6 +1101,7 @@ impl LibraryScreen {
         playing_list: Arc<Mutex<PlayingListManager>>,
         client: Arc<Mutex<BilibiliClient>>,
         player: &mut Option<AudioPlayer>,
+        playback_speed: f32,
     ) -> anyhow::Result<()> {
         if self.current_tab != LibraryTab::PlayingList {
             return Ok(());
@@ -1115,7 +1128,7 @@ impl LibraryScreen {
                 };
 
                 if let Some(p) = player {
-                    p.play(&audio_stream.url)?;
+                    p.play(&audio_stream.url, playback_speed)?;
                     self.now_playing = Some((item.title, item.artist));
                 }
             } else {

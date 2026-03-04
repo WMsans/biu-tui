@@ -291,6 +291,7 @@ impl App {
                             self.client.clone(),
                             &mut self.player,
                             self.playing_list.clone(),
+                            self.settings.playback_speed,
                         ) {
                             eprintln!("Failed to handle enter: {}", e);
                         }
@@ -322,6 +323,7 @@ impl App {
                             self.playing_list.clone(),
                             self.client.clone(),
                             &mut self.player,
+                            self.settings.playback_speed,
                         ) {
                             eprintln!("Failed to remove song: {}", e);
                         }
@@ -666,7 +668,7 @@ impl App {
                 mpris.set_track(item);
             }
 
-            p.play(&audio_stream.url)?;
+            p.play(&audio_stream.url, self.settings.playback_speed)?;
 
             if let Some(mpris) = &self.mpris {
                 mpris.set_state(PlayerState::Playing);
