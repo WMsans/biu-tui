@@ -311,6 +311,49 @@ impl App {
         Ok(())
     }
 
+    fn enter_search_mode(&mut self) -> Result<()> {
+        if let Screen::Library(library) = &mut self.screen {
+            library.search_state = Some(crate::screens::SearchState::new());
+
+            library.original_folders = Some(library.folders.clone());
+            library.original_resources = Some(library.resources.clone());
+            library.original_episodes = Some(library.episodes.clone());
+            library.original_watch_later = Some(library.watch_later.clone());
+            library.original_history = Some(library.history.clone());
+        }
+        Ok(())
+    }
+
+    fn exit_search_mode(&mut self, restore: bool) -> Result<()> {
+        if let Screen::Library(library) = &mut self.screen {
+            if restore {
+                if let Some(original) = library.original_folders.take() {
+                    library.folders = original;
+                }
+                if let Some(original) = library.original_resources.take() {
+                    library.resources = original;
+                }
+                if let Some(original) = library.original_episodes.take() {
+                    library.episodes = original;
+                }
+                if let Some(original) = library.original_watch_later.take() {
+                    library.watch_later = original;
+                }
+                if let Some(original) = library.original_history.take() {
+                    library.history = original;
+                }
+            }
+
+            library.search_state = None;
+            library.original_folders = None;
+            library.original_resources = None;
+            library.original_episodes = None;
+            library.original_watch_later = None;
+            library.original_history = None;
+        }
+        Ok(())
+    }
+
     fn poll_qr_login(&mut self) -> Result<()> {
         if let Screen::Login(login) = &mut self.screen {
             let qrcode_key = match &login.state {
