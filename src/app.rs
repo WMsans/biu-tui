@@ -272,6 +272,8 @@ impl App {
                                 }
                             }
                         }
+                    } else {
+                        self.handle_other_key(code, modifiers)?;
                     }
                 }
                 _ => {
