@@ -2,6 +2,7 @@ pub mod api;
 pub mod app;
 pub mod audio;
 pub mod download;
+pub mod input;
 pub mod mpris;
 pub mod playing_list;
 pub mod screens;
