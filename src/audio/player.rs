@@ -8,10 +8,12 @@ use std::time::Duration;
 
 use super::decoder::AudioDecoder;
 
+/// Commands sent from the main thread to the decoder thread.
 #[derive(Debug, Clone)]
 pub enum DecoderCommand {
+    /// Seek to a specific position in the audio stream.
     Seek(Duration),
-    SetSpeed(f32),
+    /// Stop playback and terminate the decoder thread.
     Stop,
 }
 
@@ -32,6 +34,7 @@ pub struct AudioPlayer {
     stream: Arc<Mutex<Option<cpal::Stream>>>,
     audio_buffer: Arc<Mutex<VecDeque<i16>>>,
     command_tx: Option<Sender<DecoderCommand>>,
+    /// Tracks pending seek position for Task 4 (seek progress indicator).
     seek_pending: Arc<Mutex<Option<Duration>>>,
     _decoder_thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -137,11 +140,6 @@ impl AudioPlayer {
                                 *position_arc.lock() = target;
                             }
                             *seek_pending_arc.lock() = None;
-                        }
-                        Ok(DecoderCommand::SetSpeed(_new_speed)) => {
-                            // Speed changes require rebuilding the decoder with new filter graph
-                            // For now, this is a placeholder - speed changes during playback
-                            // would require recreating the decoder
                         }
                         Ok(DecoderCommand::Stop) => {
                             *state.lock() = PlayerState::Stopped;
@@ -309,13 +307,10 @@ impl AudioPlayer {
         let clamped = position.min(duration);
 
         *self.seek_pending.lock() = Some(clamped);
-        self.audio_buffer.lock().clear();
 
         if let Some(tx) = &self.command_tx {
             tx.send(DecoderCommand::Seek(clamped))?;
         }
-
-        *self.position.lock() = clamped;
 
         Ok(())
     }

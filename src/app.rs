@@ -768,7 +768,9 @@ impl App {
             }
             MprisCommand::Seek(position) => {
                 if let Some(player) = &self.player {
-                    let _ = player.seek(position);
+                    if let Err(e) = player.seek(position) {
+                        eprintln!("Seek failed: {}", e);
+                    }
                     if let Some(mpris) = &self.mpris {
                         mpris.set_position(position);
                     }
@@ -776,7 +778,9 @@ impl App {
             }
             MprisCommand::SetPosition(position) => {
                 if let Some(player) = &self.player {
-                    let _ = player.seek(position);
+                    if let Err(e) = player.seek(position) {
+                        eprintln!("SetPosition failed: {}", e);
+                    }
                     if let Some(mpris) = &self.mpris {
                         mpris.set_position(position);
                     }
