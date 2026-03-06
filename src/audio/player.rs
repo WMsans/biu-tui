@@ -227,10 +227,20 @@ impl AudioPlayer {
 
         let audio_buffer_clone = self.audio_buffer.clone();
         let volume_clone = self.volume.clone();
+        let seek_pending_clone = self.seek_pending.clone();
         let channels = config.channels as usize;
         let stream = device.build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                let seek_pending = seek_pending_clone.lock();
+                if seek_pending.is_some() {
+                    for sample in data.iter_mut() {
+                        *sample = 0.0;
+                    }
+                    return;
+                }
+                drop(seek_pending);
+
                 let mut buffer = audio_buffer_clone.lock();
                 let vol = *volume_clone.lock();
 
