@@ -17,6 +17,7 @@ use crate::api::BilibiliClient;
 use crate::api::FavoriteFolder;
 use crate::audio::{AudioPlayer, PlayerState};
 use crate::download::DownloadManager;
+use crate::input::{KeyAction, KeyHoldTracker};
 use crate::mpris::{MprisCommand, MprisManager};
 use crate::playing_list::{PlayingListManager, PlaylistItem};
 use crate::screens::library::NavigationLevel;
@@ -45,6 +46,10 @@ pub struct App {
     previous_library: Option<LibraryScreen>,
     previous_player_state: Option<PlayerState>,
     mpris: Option<MprisManager>,
+    /// Tracks key hold duration for seek/speed control
+    key_tracker: KeyHoldTracker,
+    /// Stores original playback speed to restore after fast-forward
+    previous_speed: Option<f32>,
 }
 
 impl App {
@@ -142,6 +147,8 @@ impl App {
             previous_library: None,
             previous_player_state: None,
             mpris,
+            key_tracker: KeyHoldTracker::new(Duration::from_millis(200)),
+            previous_speed: None,
         })
     }
 
@@ -192,7 +199,7 @@ impl App {
                         self.running = false;
                         continue;
                     }
-                    self.handle_key(key.code, key.modifiers)?;
+                    self.handle_key(key)?;
                 }
             }
 
@@ -216,7 +223,68 @@ impl App {
         Ok(())
     }
 
-    fn handle_key(&mut self, code: KeyCode, _modifiers: KeyModifiers) -> Result<()> {
+    fn handle_key(&mut self, key: event::KeyEvent) -> Result<()> {
+        let code = key.code;
+        let modifiers = key.modifiers;
+
+        if let Some(action) = self.key_tracker.process(key) {
+            match action {
+                KeyAction::Press(KeyCode::Char('h')) | KeyAction::Hold(KeyCode::Char('h')) => {
+                    if let Screen::Library(_) = &self.screen {
+                        if let Some(player) = &self.player {
+                            let pos = player.position();
+                            let new_pos = pos.saturating_sub(Duration::from_secs(5));
+                            if let Err(e) = player.seek(new_pos) {
+                                eprintln!("Seek failed: {}", e);
+                            }
+                        }
+                    } else {
+                        self.handle_other_key(code, modifiers)?;
+                    }
+                }
+                KeyAction::Press(KeyCode::Char('l')) => {
+                    if let Screen::Library(_) = &self.screen {
+                        if let Some(player) = &self.player {
+                            let pos = player.position();
+                            let duration = player.duration();
+                            let new_pos = (pos + Duration::from_secs(5)).min(duration);
+                            if let Err(e) = player.seek(new_pos) {
+                                eprintln!("Seek failed: {}", e);
+                            }
+                        }
+                    } else {
+                        self.handle_other_key(code, modifiers)?;
+                    }
+                }
+                KeyAction::Hold(KeyCode::Char('l')) | KeyAction::Release(KeyCode::Char('l')) => {
+                    if let Screen::Library(_) = &self.screen {
+                        if action == KeyAction::Hold(KeyCode::Char('l')) {
+                            if let Some(player) = &self.player {
+                                if self.previous_speed.is_none() {
+                                    self.previous_speed = Some(player.playback_speed());
+                                    player.set_playback_speed(3.0);
+                                }
+                            }
+                        } else if action == KeyAction::Release(KeyCode::Char('l')) {
+                            if let Some(player) = &self.player {
+                                if let Some(speed) = self.previous_speed.take() {
+                                    player.set_playback_speed(speed);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    self.handle_other_key(code, modifiers)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handles key events not processed by the hold tracker (screen-specific navigation).
+    fn handle_other_key(&mut self, code: KeyCode, _modifiers: KeyModifiers) -> Result<()> {
         match &mut self.screen {
             Screen::Login(login) => match code {
                 KeyCode::Char('q') => self.running = false,
