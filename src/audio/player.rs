@@ -2,10 +2,18 @@ use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
+use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::decoder::AudioDecoder;
+
+#[derive(Debug, Clone)]
+pub enum DecoderCommand {
+    Seek(Duration),
+    SetSpeed(f32),
+    Stop,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayerState {
@@ -23,6 +31,8 @@ pub struct AudioPlayer {
     playback_speed: Arc<Mutex<f32>>,
     stream: Arc<Mutex<Option<cpal::Stream>>>,
     audio_buffer: Arc<Mutex<VecDeque<i16>>>,
+    command_tx: Option<Sender<DecoderCommand>>,
+    seek_pending: Arc<Mutex<Option<Duration>>>,
     _decoder_thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -42,6 +52,8 @@ impl AudioPlayer {
             playback_speed: Arc::new(Mutex::new(1.0)),
             stream: Arc::new(Mutex::new(None)),
             audio_buffer: Arc::new(Mutex::new(VecDeque::new())),
+            command_tx: None,
+            seek_pending: Arc::new(Mutex::new(None)),
             _decoder_thread: None,
         })
     }
@@ -88,12 +100,16 @@ impl AudioPlayer {
         *self.position.lock() = Duration::ZERO;
         *self.state.lock() = PlayerState::Playing;
 
+        let (command_tx, command_rx) = mpsc::channel();
+        self.command_tx = Some(command_tx);
+
         let buffer_size = buffer_size_for_sample_rate(sample_rate);
         let audio_buffer = self.audio_buffer.clone();
         let state = self.state.clone();
         let url_owned = url.to_string();
         let duration_arc = self.duration.clone();
         let position_arc = self.position.clone();
+        let seek_pending_arc = self.seek_pending.clone();
         let speed_for_thread = *self.playback_speed.lock();
 
         let decoder_thread = std::thread::spawn(move || {
@@ -106,11 +122,38 @@ impl AudioPlayer {
                 *duration_arc.lock() = decoder.duration();
 
                 let mut total_samples_decoded: u64 = 0;
+                let mut seek_offset_secs: u64 = 0;
                 let channels = decoder.channels() as u64;
                 let output_sample_rate = decoder.output_sample_rate() as u64;
 
                 let min_buffer_size = buffer_size / 3;
                 loop {
+                    match command_rx.try_recv() {
+                        Ok(DecoderCommand::Seek(target)) => {
+                            audio_buffer.lock().clear();
+                            if decoder.seek(target).is_ok() {
+                                total_samples_decoded = 0;
+                                seek_offset_secs = target.as_secs();
+                                *position_arc.lock() = target;
+                            }
+                            *seek_pending_arc.lock() = None;
+                        }
+                        Ok(DecoderCommand::SetSpeed(_new_speed)) => {
+                            // Speed changes require rebuilding the decoder with new filter graph
+                            // For now, this is a placeholder - speed changes during playback
+                            // would require recreating the decoder
+                        }
+                        Ok(DecoderCommand::Stop) => {
+                            *state.lock() = PlayerState::Stopped;
+                            break;
+                        }
+                        Err(mpsc::TryRecvError::Empty) => {}
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            *state.lock() = PlayerState::Stopped;
+                            break;
+                        }
+                    }
+
                     let current_state = *state.lock();
                     match current_state {
                         PlayerState::Stopped => break,
@@ -126,8 +169,8 @@ impl AudioPlayer {
                             total_samples_decoded += samples.len() as u64;
 
                             if channels > 0 && output_sample_rate > 0 {
-                                let position_secs =
-                                    total_samples_decoded / channels / output_sample_rate;
+                                let position_secs = seek_offset_secs
+                                    + total_samples_decoded / channels / output_sample_rate;
                                 *position_arc.lock() = Duration::from_secs(position_secs);
                             }
 
@@ -245,14 +288,35 @@ impl AudioPlayer {
 
     pub fn stop(&mut self) {
         *self.state.lock() = PlayerState::Stopped;
+        if let Some(tx) = self.command_tx.take() {
+            let _ = tx.send(DecoderCommand::Stop);
+        }
         *self.stream.lock() = None;
         if let Some(thread) = self._decoder_thread.take() {
             let _ = thread.join();
         }
         self.audio_buffer.lock().clear();
+        *self.seek_pending.lock() = None;
     }
 
-    pub fn seek(&self, _position: Duration) {
-        *self.position.lock() = _position;
+    pub fn seek(&self, position: Duration) -> Result<()> {
+        let current_state = *self.state.lock();
+        if current_state == PlayerState::Stopped {
+            return Ok(());
+        }
+
+        let duration = *self.duration.lock();
+        let clamped = position.min(duration);
+
+        *self.seek_pending.lock() = Some(clamped);
+        self.audio_buffer.lock().clear();
+
+        if let Some(tx) = &self.command_tx {
+            tx.send(DecoderCommand::Seek(clamped))?;
+        }
+
+        *self.position.lock() = clamped;
+
+        Ok(())
     }
 }

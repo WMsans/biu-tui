@@ -768,7 +768,7 @@ impl App {
             }
             MprisCommand::Seek(position) => {
                 if let Some(player) = &self.player {
-                    player.seek(position);
+                    let _ = player.seek(position);
                     if let Some(mpris) = &self.mpris {
                         mpris.set_position(position);
                     }
@@ -776,7 +776,7 @@ impl App {
             }
             MprisCommand::SetPosition(position) => {
                 if let Some(player) = &self.player {
-                    player.seek(position);
+                    let _ = player.seek(position);
                     if let Some(mpris) = &self.mpris {
                         mpris.set_position(position);
                     }
