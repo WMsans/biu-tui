@@ -1,11 +1,15 @@
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
-    execute,
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
+    execute, queue,
     terminal::*,
 };
 use parking_lot::Mutex;
 use ratatui::{backend::CrosstermBackend, Terminal};
+use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -53,12 +57,29 @@ impl App {
             return Err(e.into());
         }
 
+        if let Err(e) = queue!(
+            stdout,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
+        ) {
+            let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+            let _ = disable_raw_mode();
+            return Err(e.into());
+        }
+        if let Err(e) = stdout.flush() {
+            let _ = queue!(stdout, PopKeyboardEnhancementFlags);
+            let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+            let _ = disable_raw_mode();
+            return Err(e.into());
+        }
+
         let backend = CrosstermBackend::new(stdout);
         let terminal = match Terminal::new(backend) {
             Ok(t) => t,
             Err(e) => {
-                let _ = disable_raw_mode();
+                let _ = queue!(std::io::stdout(), PopKeyboardEnhancementFlags);
+                let _ = std::io::stdout().flush();
                 let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+                let _ = disable_raw_mode();
                 return Err(e.into());
             }
         };
@@ -68,8 +89,10 @@ impl App {
         match result {
             Ok(app) => Ok(app),
             Err(e) => {
-                let _ = disable_raw_mode();
+                let _ = queue!(std::io::stdout(), PopKeyboardEnhancementFlags);
+                let _ = std::io::stdout().flush();
                 let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+                let _ = disable_raw_mode();
                 Err(e)
             }
         }
@@ -918,6 +941,9 @@ impl App {
     }
 
     fn cleanup(&mut self) -> Result<()> {
+        let _ = queue!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
+        let _ = self.terminal.backend_mut().flush();
+
         disable_raw_mode()?;
         execute!(
             self.terminal.backend_mut(),
