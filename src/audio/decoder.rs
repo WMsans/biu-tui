@@ -95,9 +95,12 @@ impl AudioDecoder {
         }
     }
 
+    /// Seeks to the specified timestamp in the audio stream.
+    ///
+    /// The timestamp is converted to microseconds (AV_TIME_BASE) for FFmpeg's seek.
     pub fn seek(&mut self, timestamp: Duration) -> Result<()> {
-        let ts = timestamp.as_secs() as i64 + (timestamp.subsec_nanos() as i64) / 1_000_000_000;
-        self.input.seek(ts, ts..ts)?;
+        let ts = timestamp.as_micros() as i64;
+        self.input.seek(ts, ts..i64::MAX)?;
         Ok(())
     }
 
