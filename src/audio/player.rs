@@ -2,10 +2,18 @@ use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::decoder::AudioDecoder;
+
+#[derive(Debug, Clone, Copy)]
+pub enum SeekCommand {
+    Forward(Duration),
+    Backward(Duration),
+    To(Duration),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayerState {
@@ -23,6 +31,8 @@ pub struct AudioPlayer {
     playback_speed: Arc<Mutex<f32>>,
     stream: Arc<Mutex<Option<cpal::Stream>>>,
     audio_buffer: Arc<Mutex<VecDeque<i16>>>,
+    seek_receiver: Mutex<Option<Receiver<SeekCommand>>>,
+    seek_sender: Sender<SeekCommand>,
     _decoder_thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -33,6 +43,7 @@ fn buffer_size_for_sample_rate(sample_rate: u32) -> usize {
 impl AudioPlayer {
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn new() -> Result<Self> {
+        let (seek_sender, seek_receiver) = mpsc::channel();
         Ok(Self {
             state: Arc::new(Mutex::new(PlayerState::Stopped)),
             position: Arc::new(Mutex::new(Duration::ZERO)),
@@ -42,6 +53,8 @@ impl AudioPlayer {
             playback_speed: Arc::new(Mutex::new(1.0)),
             stream: Arc::new(Mutex::new(None)),
             audio_buffer: Arc::new(Mutex::new(VecDeque::new())),
+            seek_receiver: Mutex::new(Some(seek_receiver)),
+            seek_sender,
             _decoder_thread: None,
         })
     }
@@ -95,6 +108,7 @@ impl AudioPlayer {
         let duration_arc = self.duration.clone();
         let position_arc = self.position.clone();
         let speed_for_thread = *self.playback_speed.lock();
+        let seek_receiver = self.seek_receiver.lock().take();
 
         let decoder_thread = std::thread::spawn(move || {
             if let Ok(mut decoder) = AudioDecoder::from_url_with_sample_rate_and_speed(
@@ -102,7 +116,6 @@ impl AudioPlayer {
                 sample_rate,
                 speed_for_thread,
             ) {
-                // Decoder created successfully
                 *duration_arc.lock() = decoder.duration();
 
                 let mut total_samples_decoded: u64 = 0;
@@ -111,6 +124,51 @@ impl AudioPlayer {
 
                 let min_buffer_size = buffer_size / 3;
                 loop {
+                    if let Some(ref rx) = seek_receiver {
+                        match rx.try_recv() {
+                            Ok(SeekCommand::To(pos)) => {
+                                audio_buffer.lock().clear();
+                                if decoder.seek(pos).is_ok() {
+                                    *position_arc.lock() = pos;
+                                    total_samples_decoded =
+                                        pos.as_secs() * channels * output_sample_rate;
+                                }
+                            }
+                            Ok(SeekCommand::Forward(delta)) => {
+                                let current = *position_arc.lock();
+                                let new_pos = current + delta;
+                                let duration = *duration_arc.lock();
+                                let target = if new_pos > duration {
+                                    duration
+                                } else {
+                                    new_pos
+                                };
+                                audio_buffer.lock().clear();
+                                if decoder.seek(target).is_ok() {
+                                    *position_arc.lock() = target;
+                                    total_samples_decoded =
+                                        target.as_secs() * channels * output_sample_rate;
+                                }
+                            }
+                            Ok(SeekCommand::Backward(delta)) => {
+                                let current = *position_arc.lock();
+                                let target = if delta > current {
+                                    Duration::ZERO
+                                } else {
+                                    current - delta
+                                };
+                                audio_buffer.lock().clear();
+                                if decoder.seek(target).is_ok() {
+                                    *position_arc.lock() = target;
+                                    total_samples_decoded =
+                                        target.as_secs() * channels * output_sample_rate;
+                                }
+                            }
+                            Err(TryRecvError::Empty) => {}
+                            Err(TryRecvError::Disconnected) => break,
+                        }
+                    }
+
                     let current_state = *state.lock();
                     match current_state {
                         PlayerState::Stopped => break,
@@ -149,6 +207,11 @@ impl AudioPlayer {
                             }
                         }
                         Ok(None) => {
+                            while !audio_buffer.lock().is_empty()
+                                && *state.lock() == PlayerState::Playing
+                            {
+                                std::thread::sleep(Duration::from_millis(10));
+                            }
                             *state.lock() = PlayerState::Stopped;
                             break;
                         }
@@ -252,7 +315,15 @@ impl AudioPlayer {
         self.audio_buffer.lock().clear();
     }
 
-    pub fn seek(&self, _position: Duration) {
-        *self.position.lock() = _position;
+    pub fn seek_forward(&self, delta: Duration) {
+        let _ = self.seek_sender.send(SeekCommand::Forward(delta));
+    }
+
+    pub fn seek_backward(&self, delta: Duration) {
+        let _ = self.seek_sender.send(SeekCommand::Backward(delta));
+    }
+
+    pub fn seek_to(&self, position: Duration) {
+        let _ = self.seek_sender.send(SeekCommand::To(position));
     }
 }
