@@ -130,8 +130,10 @@ impl AudioPlayer {
                                 audio_buffer.lock().clear();
                                 if decoder.seek(pos).is_ok() {
                                     *position_arc.lock() = pos;
-                                    total_samples_decoded =
-                                        pos.as_secs() * channels * output_sample_rate;
+                                    total_samples_decoded = (pos.as_secs_f64()
+                                        * output_sample_rate as f64
+                                        * channels as f64)
+                                        as u64;
                                 }
                             }
                             Ok(SeekCommand::Forward(delta)) => {
@@ -146,8 +148,10 @@ impl AudioPlayer {
                                 audio_buffer.lock().clear();
                                 if decoder.seek(target).is_ok() {
                                     *position_arc.lock() = target;
-                                    total_samples_decoded =
-                                        target.as_secs() * channels * output_sample_rate;
+                                    total_samples_decoded = (target.as_secs_f64()
+                                        * output_sample_rate as f64
+                                        * channels as f64)
+                                        as u64;
                                 }
                             }
                             Ok(SeekCommand::Backward(delta)) => {
@@ -160,8 +164,10 @@ impl AudioPlayer {
                                 audio_buffer.lock().clear();
                                 if decoder.seek(target).is_ok() {
                                     *position_arc.lock() = target;
-                                    total_samples_decoded =
-                                        target.as_secs() * channels * output_sample_rate;
+                                    total_samples_decoded = (target.as_secs_f64()
+                                        * output_sample_rate as f64
+                                        * channels as f64)
+                                        as u64;
                                 }
                             }
                             Err(TryRecvError::Empty) => {}
