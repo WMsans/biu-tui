@@ -338,6 +338,12 @@ impl App {
                     KeyCode::Char(' ') => {
                         self.toggle_playback()?;
                     }
+                    KeyCode::Char('h') | KeyCode::Left => {
+                        self.handle_seek_backward()?;
+                    }
+                    KeyCode::Char('l') | KeyCode::Right => {
+                        self.handle_seek_forward()?;
+                    }
                     _ => {}
                 }
             }
@@ -882,6 +888,92 @@ impl App {
         if let Some(player) = &self.player {
             player.set_volume(self.settings.volume_float());
         }
+    }
+
+    fn handle_seek_forward(&mut self) -> Result<()> {
+        let should_stop = if let Some(player) = &self.player {
+            let current_pos = player.position();
+            let duration = player.duration();
+            let new_pos = current_pos + Duration::from_secs(5);
+            new_pos >= duration
+        } else {
+            return Ok(());
+        };
+
+        if should_stop {
+            match self.settings.loop_mode {
+                LoopMode::LoopList => {
+                    let next_item = self.playing_list.lock().advance_to_next().cloned();
+                    if let Some(item) = next_item {
+                        self.play_playlist_item(&item)?;
+                    } else {
+                        let items = self.playing_list.lock().items().to_vec();
+                        if !items.is_empty() {
+                            self.playing_list.lock().jump_to(0);
+                            let item = self.playing_list.lock().current().cloned();
+                            if let Some(item) = item {
+                                self.play_playlist_item(&item)?;
+                            }
+                        }
+                    }
+                }
+                LoopMode::NoLoop | LoopMode::LoopOne => {
+                    if let Some(player) = &mut self.player {
+                        player.stop();
+                    }
+                    if let Some(mpris) = &self.mpris {
+                        mpris.set_state(PlayerState::Stopped);
+                    }
+                }
+            }
+        } else if let Some(player) = &self.player {
+            player.seek_forward(Duration::from_secs(5));
+        }
+        Ok(())
+    }
+
+    fn handle_seek_backward(&mut self) -> Result<()> {
+        let should_prev = if let Some(player) = &self.player {
+            player.position() < Duration::from_secs(2)
+        } else {
+            return Ok(());
+        };
+
+        if should_prev {
+            let items_count = self.playing_list.lock().items().len();
+            if items_count == 0 {
+                return Ok(());
+            }
+
+            let current_idx = self.playing_list.lock().current_index().unwrap_or(0);
+
+            let prev_idx = if current_idx == 0 {
+                items_count - 1
+            } else {
+                current_idx - 1
+            };
+
+            self.playing_list.lock().jump_to(prev_idx);
+
+            let item = self.playing_list.lock().current().cloned();
+            if let Some(item) = item {
+                let old_now_playing = if let Screen::Library(lib) = &self.screen {
+                    lib.now_playing.clone()
+                } else {
+                    None
+                };
+
+                self.play_playlist_item(&item)?;
+
+                if let Screen::Library(lib) = &mut self.screen {
+                    let new_now_playing = lib.now_playing.clone();
+                    self.notify_mpris_if_playback_changed(&old_now_playing, &new_now_playing);
+                }
+            }
+        } else if let Some(player) = &self.player {
+            player.seek_backward(Duration::from_secs(5));
+        }
+        Ok(())
     }
 
     /// Notify MPRIS when playback state changes from library operations.
