@@ -901,29 +901,36 @@ impl App {
         };
 
         if should_stop {
-            match self.settings.loop_mode {
-                LoopMode::LoopList => {
-                    let next_item = self.playing_list.lock().advance_to_next().cloned();
-                    if let Some(item) = next_item {
-                        self.play_playlist_item(&item)?;
-                    } else {
-                        let items = self.playing_list.lock().items().to_vec();
-                        if !items.is_empty() {
-                            self.playing_list.lock().jump_to(0);
-                            let item = self.playing_list.lock().current().cloned();
-                            if let Some(item) = item {
-                                self.play_playlist_item(&item)?;
+            let item_to_play = {
+                let mut list = self.playing_list.lock();
+                match self.settings.loop_mode {
+                    LoopMode::LoopOne => list.current().cloned(),
+                    LoopMode::LoopList => {
+                        let next_item = list.advance_to_next().cloned();
+                        if next_item.is_some() {
+                            next_item
+                        } else {
+                            let items = list.items();
+                            if !items.is_empty() {
+                                list.jump_to(0);
+                                list.current().cloned()
+                            } else {
+                                None
                             }
                         }
                     }
+                    LoopMode::NoLoop => None,
                 }
-                LoopMode::NoLoop | LoopMode::LoopOne => {
-                    if let Some(player) = &mut self.player {
-                        player.stop();
-                    }
-                    if let Some(mpris) = &self.mpris {
-                        mpris.set_state(PlayerState::Stopped);
-                    }
+            };
+
+            if let Some(item) = item_to_play {
+                self.play_playlist_item(&item)?;
+            } else {
+                if let Some(player) = &mut self.player {
+                    player.stop();
+                }
+                if let Some(mpris) = &self.mpris {
+                    mpris.set_state(PlayerState::Stopped);
                 }
             }
         } else if let Some(player) = &self.player {
@@ -940,35 +947,26 @@ impl App {
         };
 
         if should_prev {
-            let items_count = self.playing_list.lock().items().len();
-            if items_count == 0 {
-                return Ok(());
-            }
+            let item = {
+                let mut list = self.playing_list.lock();
+                let items_count = list.items().len();
+                if items_count == 0 {
+                    return Ok(());
+                }
 
-            let current_idx = self.playing_list.lock().current_index().unwrap_or(0);
-
-            let prev_idx = if current_idx == 0 {
-                items_count - 1
-            } else {
-                current_idx - 1
-            };
-
-            self.playing_list.lock().jump_to(prev_idx);
-
-            let item = self.playing_list.lock().current().cloned();
-            if let Some(item) = item {
-                let old_now_playing = if let Screen::Library(lib) = &self.screen {
-                    lib.now_playing.clone()
+                let current_idx = list.current_index().unwrap_or(0);
+                let prev_idx = if current_idx == 0 {
+                    items_count - 1
                 } else {
-                    None
+                    current_idx - 1
                 };
 
-                self.play_playlist_item(&item)?;
+                list.jump_to(prev_idx);
+                list.current().cloned()
+            };
 
-                if let Screen::Library(lib) = &mut self.screen {
-                    let new_now_playing = lib.now_playing.clone();
-                    self.notify_mpris_if_playback_changed(&old_now_playing, &new_now_playing);
-                }
+            if let Some(item) = item {
+                self.play_playlist_item(&item)?;
             }
         } else if let Some(player) = &self.player {
             player.seek_backward(Duration::from_secs(5));
