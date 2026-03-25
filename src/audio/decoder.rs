@@ -95,6 +95,12 @@ impl AudioDecoder {
         }
     }
 
+    pub fn seek(&mut self, timestamp: Duration) -> Result<()> {
+        let ts = timestamp.as_secs() as i64 + (timestamp.subsec_nanos() as i64) / 1_000_000_000;
+        self.input.seek(ts, ts..ts)?;
+        Ok(())
+    }
+
     pub fn decode_next(&mut self) -> Result<Option<Vec<i16>>> {
         if self.filter_graph.is_some() {
             self.decode_next_with_filter()
