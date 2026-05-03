@@ -219,8 +219,40 @@ impl AudioPlayer {
                             break;
                         }
                         Err(_) => {
-                            *state.lock() = PlayerState::Stopped;
-                            break;
+                            // The HTTP/TLS connection backing the decoder can
+                            // be dropped by the server during a long pause,
+                            // which surfaces here as "Error in the pull
+                            // function" / corrupt packets. Try to reopen the
+                            // stream at the current position before giving up
+                            // so we don't skip to the next song.
+                            let resume_pos = *position_arc.lock();
+                            let mut recovered = false;
+                            for _ in 0..2 {
+                                match AudioDecoder::from_url_with_sample_rate_and_speed(
+                                    &url_owned,
+                                    sample_rate,
+                                    speed_for_thread,
+                                ) {
+                                    Ok(mut new_decoder) => {
+                                        let _ = new_decoder.seek(resume_pos);
+                                        decoder = new_decoder;
+                                        audio_buffer.lock().clear();
+                                        total_samples_decoded = (resume_pos.as_secs_f64()
+                                            * output_sample_rate as f64
+                                            * channels as f64)
+                                            as u64;
+                                        recovered = true;
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        std::thread::sleep(Duration::from_millis(500));
+                                    }
+                                }
+                            }
+                            if !recovered {
+                                *state.lock() = PlayerState::Stopped;
+                                break;
+                            }
                         }
                     }
 
