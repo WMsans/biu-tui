@@ -338,6 +338,12 @@ impl App {
                     KeyCode::Char(' ') => {
                         self.toggle_playback()?;
                     }
+                    KeyCode::Char('h') | KeyCode::Left => {
+                        self.handle_seek_backward()?;
+                    }
+                    KeyCode::Char('l') | KeyCode::Right => {
+                        self.handle_seek_forward()?;
+                    }
                     _ => {}
                 }
             }
@@ -768,7 +774,7 @@ impl App {
             }
             MprisCommand::Seek(position) => {
                 if let Some(player) = &self.player {
-                    player.seek(position);
+                    player.seek_to(position);
                     if let Some(mpris) = &self.mpris {
                         mpris.set_position(position);
                     }
@@ -776,7 +782,7 @@ impl App {
             }
             MprisCommand::SetPosition(position) => {
                 if let Some(player) = &self.player {
-                    player.seek(position);
+                    player.seek_to(position);
                     if let Some(mpris) = &self.mpris {
                         mpris.set_position(position);
                     }
@@ -882,6 +888,90 @@ impl App {
         if let Some(player) = &self.player {
             player.set_volume(self.settings.volume_float());
         }
+    }
+
+    fn handle_seek_forward(&mut self) -> Result<()> {
+        let should_stop = if let Some(player) = &self.player {
+            let current_pos = player.position();
+            let duration = player.duration();
+            let new_pos = current_pos + Duration::from_secs(5);
+            new_pos >= duration
+        } else {
+            return Ok(());
+        };
+
+        if should_stop {
+            let item_to_play = {
+                let mut list = self.playing_list.lock();
+                match self.settings.loop_mode {
+                    LoopMode::LoopOne => list.current().cloned(),
+                    LoopMode::LoopList => {
+                        let next_item = list.advance_to_next().cloned();
+                        if next_item.is_some() {
+                            next_item
+                        } else {
+                            let items = list.items();
+                            if !items.is_empty() {
+                                list.jump_to(0);
+                                list.current().cloned()
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                    LoopMode::NoLoop => None,
+                }
+            };
+
+            if let Some(item) = item_to_play {
+                self.play_playlist_item(&item)?;
+            } else {
+                if let Some(player) = &mut self.player {
+                    player.stop();
+                }
+                if let Some(mpris) = &self.mpris {
+                    mpris.set_state(PlayerState::Stopped);
+                }
+            }
+        } else if let Some(player) = &self.player {
+            player.seek_forward(Duration::from_secs(5));
+        }
+        Ok(())
+    }
+
+    fn handle_seek_backward(&mut self) -> Result<()> {
+        let should_prev = if let Some(player) = &self.player {
+            player.position() < Duration::from_secs(2)
+        } else {
+            return Ok(());
+        };
+
+        if should_prev {
+            let item = {
+                let mut list = self.playing_list.lock();
+                let items_count = list.items().len();
+                if items_count == 0 {
+                    return Ok(());
+                }
+
+                let current_idx = list.current_index().unwrap_or(0);
+                let prev_idx = if current_idx == 0 {
+                    items_count - 1
+                } else {
+                    current_idx - 1
+                };
+
+                list.jump_to(prev_idx);
+                list.current().cloned()
+            };
+
+            if let Some(item) = item {
+                self.play_playlist_item(&item)?;
+            }
+        } else if let Some(player) = &self.player {
+            player.seek_backward(Duration::from_secs(5));
+        }
+        Ok(())
     }
 
     /// Notify MPRIS when playback state changes from library operations.

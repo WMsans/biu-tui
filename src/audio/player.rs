@@ -2,10 +2,18 @@ use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
+use std::sync::mpsc::{self, Sender, TryRecvError};
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::decoder::AudioDecoder;
+
+#[derive(Debug, Clone, Copy)]
+pub enum SeekCommand {
+    Forward(Duration),
+    Backward(Duration),
+    To(Duration),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayerState {
@@ -23,6 +31,7 @@ pub struct AudioPlayer {
     playback_speed: Arc<Mutex<f32>>,
     stream: Arc<Mutex<Option<cpal::Stream>>>,
     audio_buffer: Arc<Mutex<VecDeque<i16>>>,
+    seek_sender: Mutex<Sender<SeekCommand>>,
     _decoder_thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -33,6 +42,7 @@ fn buffer_size_for_sample_rate(sample_rate: u32) -> usize {
 impl AudioPlayer {
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn new() -> Result<Self> {
+        let (seek_sender, _seek_receiver) = mpsc::channel();
         Ok(Self {
             state: Arc::new(Mutex::new(PlayerState::Stopped)),
             position: Arc::new(Mutex::new(Duration::ZERO)),
@@ -42,6 +52,7 @@ impl AudioPlayer {
             playback_speed: Arc::new(Mutex::new(1.0)),
             stream: Arc::new(Mutex::new(None)),
             audio_buffer: Arc::new(Mutex::new(VecDeque::new())),
+            seek_sender: Mutex::new(seek_sender),
             _decoder_thread: None,
         })
     }
@@ -95,6 +106,8 @@ impl AudioPlayer {
         let duration_arc = self.duration.clone();
         let position_arc = self.position.clone();
         let speed_for_thread = *self.playback_speed.lock();
+        let (seek_sender, seek_receiver) = mpsc::channel();
+        *self.seek_sender.lock() = seek_sender;
 
         let decoder_thread = std::thread::spawn(move || {
             if let Ok(mut decoder) = AudioDecoder::from_url_with_sample_rate_and_speed(
@@ -102,7 +115,6 @@ impl AudioPlayer {
                 sample_rate,
                 speed_for_thread,
             ) {
-                // Decoder created successfully
                 *duration_arc.lock() = decoder.duration();
 
                 let mut total_samples_decoded: u64 = 0;
@@ -111,6 +123,55 @@ impl AudioPlayer {
 
                 let min_buffer_size = buffer_size / 3;
                 loop {
+                    match seek_receiver.try_recv() {
+                        Ok(SeekCommand::To(pos)) => {
+                            audio_buffer.lock().clear();
+                            if decoder.seek(pos).is_ok() {
+                                *position_arc.lock() = pos;
+                                total_samples_decoded = (pos.as_secs_f64()
+                                    * output_sample_rate as f64
+                                    * channels as f64)
+                                    as u64;
+                            }
+                        }
+                        Ok(SeekCommand::Forward(delta)) => {
+                            let current = *position_arc.lock();
+                            let new_pos = current + delta;
+                            let duration = *duration_arc.lock();
+                            let target = if new_pos > duration {
+                                duration
+                            } else {
+                                new_pos
+                            };
+                            audio_buffer.lock().clear();
+                            if decoder.seek(target).is_ok() {
+                                *position_arc.lock() = target;
+                                total_samples_decoded = (target.as_secs_f64()
+                                    * output_sample_rate as f64
+                                    * channels as f64)
+                                    as u64;
+                            }
+                        }
+                        Ok(SeekCommand::Backward(delta)) => {
+                            let current = *position_arc.lock();
+                            let target = if delta > current {
+                                Duration::ZERO
+                            } else {
+                                current - delta
+                            };
+                            audio_buffer.lock().clear();
+                            if decoder.seek(target).is_ok() {
+                                *position_arc.lock() = target;
+                                total_samples_decoded = (target.as_secs_f64()
+                                    * output_sample_rate as f64
+                                    * channels as f64)
+                                    as u64;
+                            }
+                        }
+                        Err(TryRecvError::Empty) => {}
+                        Err(TryRecvError::Disconnected) => break,
+                    }
+
                     let current_state = *state.lock();
                     match current_state {
                         PlayerState::Stopped => break,
@@ -149,12 +210,49 @@ impl AudioPlayer {
                             }
                         }
                         Ok(None) => {
+                            while !audio_buffer.lock().is_empty()
+                                && *state.lock() == PlayerState::Playing
+                            {
+                                std::thread::sleep(Duration::from_millis(10));
+                            }
                             *state.lock() = PlayerState::Stopped;
                             break;
                         }
                         Err(_) => {
-                            *state.lock() = PlayerState::Stopped;
-                            break;
+                            // The HTTP/TLS connection backing the decoder can
+                            // be dropped by the server during a long pause,
+                            // which surfaces here as "Error in the pull
+                            // function" / corrupt packets. Try to reopen the
+                            // stream at the current position before giving up
+                            // so we don't skip to the next song.
+                            let resume_pos = *position_arc.lock();
+                            let mut recovered = false;
+                            for _ in 0..2 {
+                                match AudioDecoder::from_url_with_sample_rate_and_speed(
+                                    &url_owned,
+                                    sample_rate,
+                                    speed_for_thread,
+                                ) {
+                                    Ok(mut new_decoder) => {
+                                        let _ = new_decoder.seek(resume_pos);
+                                        decoder = new_decoder;
+                                        audio_buffer.lock().clear();
+                                        total_samples_decoded = (resume_pos.as_secs_f64()
+                                            * output_sample_rate as f64
+                                            * channels as f64)
+                                            as u64;
+                                        recovered = true;
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        std::thread::sleep(Duration::from_millis(500));
+                                    }
+                                }
+                            }
+                            if !recovered {
+                                *state.lock() = PlayerState::Stopped;
+                                break;
+                            }
                         }
                     }
 
@@ -252,7 +350,15 @@ impl AudioPlayer {
         self.audio_buffer.lock().clear();
     }
 
-    pub fn seek(&self, _position: Duration) {
-        *self.position.lock() = _position;
+    pub fn seek_forward(&self, delta: Duration) {
+        let _ = self.seek_sender.lock().send(SeekCommand::Forward(delta));
+    }
+
+    pub fn seek_backward(&self, delta: Duration) {
+        let _ = self.seek_sender.lock().send(SeekCommand::Backward(delta));
+    }
+
+    pub fn seek_to(&self, position: Duration) {
+        let _ = self.seek_sender.lock().send(SeekCommand::To(position));
     }
 }
