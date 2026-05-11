@@ -4,6 +4,7 @@ pub mod audio;
 pub mod download;
 pub mod mpris;
 pub mod playing_list;
+pub mod playlists;
 pub mod screens;
 pub mod storage;
 pub mod ui;

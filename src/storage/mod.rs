@@ -3,6 +3,7 @@ pub mod cookies;
 pub mod playing_list;
 pub mod settings;
 
+pub use crate::playlists::PlaylistManager;
 pub use config::{AudioQuality, Config, OutputFormat};
 pub use cookies::CookieStorage;
 pub use playing_list::{PlayingListManager, PlaylistItem};
