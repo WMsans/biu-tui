@@ -436,8 +436,7 @@ impl LibraryScreen {
                 PlaylistNavLevel::PlaylistContents { .. } => self
                     .playlist_items
                     .iter()
-                    .enumerate()
-                    .map(|(_idx, item)| {
+                    .map(|item| {
                         ListItem::new(format!(
                             "{} - {}  {}",
                             item.title,

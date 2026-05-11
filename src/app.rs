@@ -269,10 +269,8 @@ impl App {
                 }
 
                 match code {
-                    KeyCode::Char('/') => {
-                        if library.search_state.is_none() {
-                            self.enter_search_mode()?;
-                        }
+                    KeyCode::Char('/') if library.search_state.is_none() => {
+                        self.enter_search_mode()?;
                     }
                     KeyCode::Char('q') => self.running = false,
                     KeyCode::Tab => {
@@ -425,39 +423,35 @@ impl App {
                             );
                         }
                     }
-                    KeyCode::Char('n') => {
+                    KeyCode::Char('n')
                         if library.current_tab == LibraryTab::Playlists
-                            && library.playlist_nav_level == PlaylistNavLevel::PlaylistList
-                        {
-                            library.handle_playlists_create(self.playlist_manager.clone());
-                        }
+                            && library.playlist_nav_level == PlaylistNavLevel::PlaylistList =>
+                    {
+                        library.handle_playlists_create(self.playlist_manager.clone());
                     }
-                    KeyCode::Char('r') => {
+                    KeyCode::Char('r')
                         if library.current_tab == LibraryTab::Playlists
-                            && library.playlist_nav_level == PlaylistNavLevel::PlaylistList
-                        {
-                            library.handle_playlists_rename(self.playlist_manager.clone());
-                        }
+                            && library.playlist_nav_level == PlaylistNavLevel::PlaylistList =>
+                    {
+                        library.handle_playlists_rename(self.playlist_manager.clone());
                     }
-                    KeyCode::Char('u') => {
+                    KeyCode::Char('u')
                         if library.current_tab == LibraryTab::Playlists
                             && matches!(
                                 library.playlist_nav_level,
                                 PlaylistNavLevel::PlaylistContents { .. }
-                            )
-                        {
-                            library.handle_playlists_reorder(self.playlist_manager.clone(), true);
-                        }
+                            ) =>
+                    {
+                        library.handle_playlists_reorder(self.playlist_manager.clone(), true);
                     }
-                    KeyCode::Char('U') => {
+                    KeyCode::Char('U')
                         if library.current_tab == LibraryTab::Playlists
                             && matches!(
                                 library.playlist_nav_level,
                                 PlaylistNavLevel::PlaylistContents { .. }
-                            )
-                        {
-                            library.handle_playlists_reorder(self.playlist_manager.clone(), false);
-                        }
+                            ) =>
+                    {
+                        library.handle_playlists_reorder(self.playlist_manager.clone(), false);
                     }
                     KeyCode::Char('s') => {
                         self.previous_library = Some((**library).clone());
