@@ -15,6 +15,7 @@ use crate::audio::{AudioPlayer, PlayerState};
 use crate::download::DownloadManager;
 use crate::mpris::{MprisCommand, MprisManager};
 use crate::playing_list::{PlayingListManager, PlaylistItem};
+use crate::playlists::PlaylistManager;
 use crate::screens::library::NavigationLevel;
 use crate::screens::{
     LibraryScreen, LibraryTab, LoginScreen, LoginState, Searchable, SettingsScreen,
@@ -38,6 +39,7 @@ pub struct App {
     last_qr_poll: Option<Instant>,
     settings: Settings,
     playing_list: Arc<Mutex<PlayingListManager>>,
+    playlist_manager: Arc<Mutex<PlaylistManager>>,
     previous_library: Option<LibraryScreen>,
     previous_player_state: Option<PlayerState>,
     mpris: Option<MprisManager>,
@@ -84,6 +86,11 @@ impl App {
             PlayingListManager::new_empty().unwrap()
         })));
 
+        let playlist_manager = Arc::new(Mutex::new(PlaylistManager::new().unwrap_or_else(|e| {
+            eprintln!("Failed to load playlists: {}", e);
+            PlaylistManager::new().unwrap()
+        })));
+
         let has_session = Self::try_restore_session(&mut client).unwrap_or(false);
 
         let client = Arc::new(Mutex::new(client));
@@ -116,6 +123,7 @@ impl App {
             last_qr_poll: None,
             settings,
             playing_list,
+            playlist_manager,
             previous_library: None,
             previous_player_state: None,
             mpris,
