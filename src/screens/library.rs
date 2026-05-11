@@ -650,7 +650,10 @@ impl LibraryScreen {
             LibraryTab::WatchLater => self.watch_later.len(),
             LibraryTab::History => self.history.len(),
             LibraryTab::PlayingNow => playing_list.lock().items().len(),
-            LibraryTab::Playlists => self.playlist_items.len(),
+            LibraryTab::Playlists => match &self.playlist_nav_level {
+                PlaylistNavLevel::PlaylistList => self.playlist_names.len(),
+                PlaylistNavLevel::PlaylistContents { .. } => self.playlist_items.len(),
+            },
         }
     }
 

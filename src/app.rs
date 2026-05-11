@@ -226,20 +226,88 @@ impl App {
                 // Clear status message on any keypress
                 library.status_message = None;
 
+                // Handle add prompt keys first (modal - priority over everything)
+                if library.add_prompt_state.is_some() {
+                    let handled = library.handle_add_prompt_key(
+                        code,
+                        self.playing_list.clone(),
+                        self.playlist_manager.clone(),
+                        self.client.clone(),
+                    );
+                    if let Err(e) = handled {
+                        library.status_message = Some(format!("Add failed: {}", e));
+                    }
+                    return Ok(());
+                }
+
                 // Handle search input if in search mode
                 if let Some(ref mut search_state) = library.search_state {
-                    // Handle add prompt keys first (modal)
-                    if library.add_prompt_state.is_some() {
-                        let handled = library.handle_add_prompt_key(
-                            code,
-                            self.playing_list.clone(),
-                            self.playlist_manager.clone(),
-                            self.client.clone(),
-                        );
-                        if let Err(e) = handled {
-                            library.status_message = Some(format!("Add failed: {}", e));
+                    // Handle playlist create/rename input (uses search_state as text input)
+                    if library.playlist_edit_mode.is_some() {
+                        match code {
+                            KeyCode::Esc => {
+                                library.playlist_edit_mode = None;
+                                library.search_state = None;
+                                library.status_message = None;
+                                return Ok(());
+                            }
+                            KeyCode::Enter => {
+                                let edit_mode = library.playlist_edit_mode.take().unwrap();
+                                let query = library
+                                    .search_state
+                                    .as_ref()
+                                    .map(|s| s.query.clone())
+                                    .unwrap_or_default();
+                                library.search_state = None;
+
+                                match edit_mode {
+                                    PlaylistEditMode::Creating => {
+                                        let create_result = {
+                                            let pm = self.playlist_manager.lock();
+                                            pm.create(&query)
+                                        };
+                                        match create_result {
+                                            Ok(_) => {
+                                                if let Ok(names) =
+                                                    self.playlist_manager.lock().list_names()
+                                                {
+                                                    library.playlist_names = names;
+                                                }
+                                                library.status_message =
+                                                    Some(format!("Created '{}'", query));
+                                            }
+                                            Err(e) => {
+                                                library.status_message =
+                                                    Some(format!("Create failed: {}", e));
+                                            }
+                                        }
+                                    }
+                                    PlaylistEditMode::Renaming { old_name } => {
+                                        let rename_result = {
+                                            let pm = self.playlist_manager.lock();
+                                            pm.rename(&old_name, &query)
+                                        };
+                                        match rename_result {
+                                            Ok(_) => {
+                                                if let Ok(names) =
+                                                    self.playlist_manager.lock().list_names()
+                                                {
+                                                    library.playlist_names = names;
+                                                }
+                                                library.status_message =
+                                                    Some(format!("Renamed to '{}'", query));
+                                            }
+                                            Err(e) => {
+                                                library.status_message =
+                                                    Some(format!("Rename failed: {}", e));
+                                            }
+                                        }
+                                    }
+                                }
+                                return Ok(());
+                            }
+                            _ => {} // fall through to normal search input handling
                         }
-                        return Ok(());
                     }
 
                     match code {
@@ -304,6 +372,13 @@ impl App {
                             LibraryTab::PlayingNow => LibraryTab::Playlists,
                             LibraryTab::Playlists => LibraryTab::Favorites,
                         };
+                        // Preload playlist_names so cursor/navigation works on the
+                        // Playlists tab (render-time clone loses this state otherwise).
+                        if library.current_tab == LibraryTab::Playlists {
+                            if let Ok(names) = self.playlist_manager.lock().list_names() {
+                                library.playlist_names = names;
+                            }
+                        }
                         library.reset_selection_for_tab(self.playing_list.clone());
                     }
                     KeyCode::Char('j') | KeyCode::Down => {
@@ -326,8 +401,17 @@ impl App {
 
                             match edit_mode {
                                 PlaylistEditMode::Creating => {
-                                    match self.playlist_manager.lock().create(&query) {
+                                    let create_result = {
+                                        let pm = self.playlist_manager.lock();
+                                        pm.create(&query)
+                                    };
+                                    match create_result {
                                         Ok(_) => {
+                                            if let Ok(names) =
+                                                self.playlist_manager.lock().list_names()
+                                            {
+                                                library.playlist_names = names;
+                                            }
                                             library.status_message =
                                                 Some(format!("Created '{}'", query));
                                         }
@@ -338,8 +422,17 @@ impl App {
                                     }
                                 }
                                 PlaylistEditMode::Renaming { old_name } => {
-                                    match self.playlist_manager.lock().rename(&old_name, &query) {
+                                    let rename_result = {
+                                        let pm = self.playlist_manager.lock();
+                                        pm.rename(&old_name, &query)
+                                    };
+                                    match rename_result {
                                         Ok(_) => {
+                                            if let Ok(names) =
+                                                self.playlist_manager.lock().list_names()
+                                            {
+                                                library.playlist_names = names;
+                                            }
                                             library.status_message =
                                                 Some(format!("Renamed to '{}'", query));
                                         }
