@@ -4,17 +4,23 @@ use std::path::PathBuf;
 
 use crate::playing_list::PlaylistItem;
 
+/// A named playlist containing a list of playable items.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Playlist {
+    /// Display name of the playlist.
     pub name: String,
+    /// The items in this playlist.
     pub items: Vec<PlaylistItem>,
 }
 
+/// Manages playlist persistence: create, load, delete, rename, and modify items.
 pub struct PlaylistManager {
     base_dir: PathBuf,
 }
 
 impl PlaylistManager {
+    /// Creates a new PlaylistManager, ensuring the playlists storage directory exists.
+    /// Rebuilds the index if the index file is missing.
     pub fn new() -> Result<Self> {
         let base_dir = crate::storage::Settings::settings_dir()?.join("playlists");
         std::fs::create_dir_all(&base_dir).context("Failed to create playlists directory")?;
@@ -89,6 +95,7 @@ impl PlaylistManager {
         self.save_index(&names)
     }
 
+    /// Lists all existing playlist names, cleaning up stale entries from the index.
     pub fn list_names(&self) -> Result<Vec<String>> {
         if !self.index_path().exists() {
             self.rebuild_index()?;
@@ -109,6 +116,7 @@ impl PlaylistManager {
         Ok(valid)
     }
 
+    /// Loads a playlist by name. Returns an empty playlist if the file does not exist.
     pub fn load(&self, name: &str) -> Result<Playlist> {
         let path = self.playlist_path(name);
         if !path.exists() {
@@ -133,6 +141,8 @@ impl PlaylistManager {
         Ok(())
     }
 
+    /// Creates a new empty playlist with the given name.
+    /// Rejects empty names, names longer than 64 chars, dot-prefixed names, and duplicates.
     pub fn create(&self, name: &str) -> Result<()> {
         let name = name.trim();
         if name.is_empty() {
@@ -140,6 +150,9 @@ impl PlaylistManager {
         }
         if name.len() > 64 {
             anyhow::bail!("Playlist name too long (max 64 characters)");
+        }
+        if name.starts_with('.') {
+            anyhow::bail!("Playlist name cannot start with '.'");
         }
         let path = self.playlist_path(name);
         if path.exists() {
@@ -157,6 +170,7 @@ impl PlaylistManager {
         Ok(())
     }
 
+    /// Deletes a playlist by name, removing the file and index entry.
     pub fn delete(&self, name: &str) -> Result<()> {
         let path = self.playlist_path(name);
         if path.exists() {
@@ -169,6 +183,9 @@ impl PlaylistManager {
         Ok(())
     }
 
+    /// Renames a playlist from old_name to new_name.
+    /// Rejects empty names, names longer than 64 chars, dot-prefixed names, duplicates,
+    /// and non-existent source playlists.
     pub fn rename(&self, old_name: &str, new_name: &str) -> Result<()> {
         let new_name = new_name.trim();
         if new_name.is_empty() {
@@ -176,6 +193,9 @@ impl PlaylistManager {
         }
         if new_name.len() > 64 {
             anyhow::bail!("Playlist name too long (max 64 characters)");
+        }
+        if new_name.starts_with('.') {
+            anyhow::bail!("Playlist name cannot start with '.'");
         }
         if self.playlist_path(new_name).exists() {
             anyhow::bail!("Playlist '{}' already exists", new_name);
@@ -187,10 +207,8 @@ impl PlaylistManager {
 
         let mut playlist = self.load(old_name)?;
         playlist.name = new_name.to_string();
+        self.save(&playlist)?;
         let new_path = self.playlist_path(new_name);
-        let content =
-            serde_json::to_string_pretty(&playlist).context("Failed to serialize playlist")?;
-        std::fs::write(&new_path, content).context("Failed to write renamed playlist")?;
 
         if old_path != new_path {
             std::fs::remove_file(&old_path).ok();
@@ -205,6 +223,7 @@ impl PlaylistManager {
         Ok(())
     }
 
+    /// Adds an item to the end of a playlist.
     pub fn add_item(&self, playlist_name: &str, item: PlaylistItem) -> Result<()> {
         let mut playlist = self.load(playlist_name)?;
         playlist.items.push(item);
@@ -212,19 +231,45 @@ impl PlaylistManager {
         Ok(())
     }
 
+    /// Removes an item at the given index from a playlist.
+    /// Returns an error if the index is out of bounds.
     pub fn remove_item(&self, playlist_name: &str, index: usize) -> Result<()> {
         let mut playlist = self.load(playlist_name)?;
-        if index < playlist.items.len() {
-            playlist.items.remove(index);
-            self.save(&playlist)?;
+        if index >= playlist.items.len() {
+            anyhow::bail!(
+                "Invalid index {} for playlist '{}' (length {})",
+                index,
+                playlist_name,
+                playlist.items.len()
+            );
         }
+        playlist.items.remove(index);
+        self.save(&playlist)?;
         Ok(())
     }
 
+    /// Reorders items within a playlist by moving the item at `from` to `to`.
+    /// Returns an error if either index is out of bounds.
     pub fn reorder(&self, playlist_name: &str, from: usize, to: usize) -> Result<()> {
         let mut playlist = self.load(playlist_name)?;
         let len = playlist.items.len();
-        if from < len && to < len && from != to {
+        if from >= len {
+            anyhow::bail!(
+                "Invalid source index {} for playlist '{}' (length {})",
+                from,
+                playlist_name,
+                len
+            );
+        }
+        if to >= len {
+            anyhow::bail!(
+                "Invalid target index {} for playlist '{}' (length {})",
+                to,
+                playlist_name,
+                len
+            );
+        }
+        if from != to {
             let item = playlist.items.remove(from);
             playlist.items.insert(to, item);
             self.save(&playlist)?;
@@ -232,6 +277,7 @@ impl PlaylistManager {
         Ok(())
     }
 
+    /// Returns all items in a playlist.
     pub fn get_items(&self, playlist_name: &str) -> Result<Vec<PlaylistItem>> {
         let playlist = self.load(playlist_name)?;
         Ok(playlist.items)
@@ -297,6 +343,12 @@ mod tests {
     }
 
     #[test]
+    fn test_create_dot_prefixed_rejected() {
+        let env = setup();
+        assert!(env.manager.create(".hidden").is_err());
+    }
+
+    #[test]
     fn test_delete_playlist() {
         let env = setup();
         env.manager.create("TempPlaylist").unwrap();
@@ -321,6 +373,15 @@ mod tests {
         env.manager.create("First").unwrap();
         env.manager.create("Second").unwrap();
         assert!(env.manager.rename("First", "Second").is_err());
+    }
+
+    #[test]
+    fn test_rename_dot_prefixed_rejected() {
+        let env = setup();
+        env.manager.create("Normal").unwrap();
+        assert!(env.manager.rename("Normal", ".hidden").is_err());
+        let names = env.manager.list_names().unwrap();
+        assert_eq!(names, vec!["Normal"]);
     }
 
     #[test]
@@ -349,6 +410,17 @@ mod tests {
     }
 
     #[test]
+    fn test_remove_item_out_of_bounds() {
+        let env = setup();
+        env.manager.create("Songs").unwrap();
+        env.manager.add_item("Songs", create_test_item(1)).unwrap();
+        assert!(env.manager.remove_item("Songs", 99).is_err());
+        assert!(env.manager.remove_item("Songs", 1).is_err());
+        let items = env.manager.get_items("Songs").unwrap();
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
     fn test_reorder_items() {
         let env = setup();
         env.manager.create("Songs").unwrap();
@@ -373,11 +445,12 @@ mod tests {
     }
 
     #[test]
-    fn test_reorder_out_of_bounds_noop() {
+    fn test_reorder_out_of_bounds_error() {
         let env = setup();
         env.manager.create("Songs").unwrap();
         env.manager.add_item("Songs", create_test_item(1)).unwrap();
-        env.manager.reorder("Songs", 0, 99).unwrap();
+        assert!(env.manager.reorder("Songs", 0, 99).is_err());
+        assert!(env.manager.reorder("Songs", 99, 0).is_err());
         let items = env.manager.get_items("Songs").unwrap();
         assert_eq!(items.len(), 1);
     }
