@@ -2,6 +2,7 @@ use crate::api::{BilibiliClient, HistoryItem, WatchLaterItem};
 use crate::api::{FavoriteFolder, FavoriteResource};
 use crate::audio::AudioPlayer;
 use crate::playing_list::{PlayingListManager, PlaylistItem};
+use crate::playlists::PlaylistManager;
 use crate::storage::LoopMode;
 use crate::ui::widgets::SearchBar;
 use parking_lot::Mutex;
@@ -18,7 +19,8 @@ pub enum LibraryTab {
     Favorites,
     WatchLater,
     History,
-    PlayingList,
+    PlayingNow,
+    Playlists,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -34,6 +36,33 @@ pub enum NavigationLevel {
         bvid: String,
         video_title: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlaylistNavLevel {
+    PlaylistList,
+    PlaylistContents { name: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct AddPromptState {
+    pub is_active: bool,
+    pub destinations: Vec<String>,
+    pub selected: usize,
+    pub source_title: String,
+    pub mode: AddPromptMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddPromptMode {
+    Single,
+    All,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlaylistEditMode {
+    Creating,
+    Renaming { old_name: String },
 }
 
 pub enum NextAction {
@@ -69,6 +98,12 @@ pub struct LibraryScreen {
     pub original_episodes: Option<Vec<crate::api::VideoPage>>,
     pub original_watch_later: Option<Vec<WatchLaterItem>>,
     pub original_history: Option<Vec<HistoryItem>>,
+    pub playlist_nav_level: PlaylistNavLevel,
+    pub playlist_items: Vec<PlaylistItem>,
+    pub playlist_names: Vec<String>,
+    pub add_prompt_state: Option<AddPromptState>,
+    pub playlist_edit_mode: Option<PlaylistEditMode>,
+    pub add_all_candidates: Vec<PlaylistItem>,
 }
 
 impl Default for LibraryScreen {
@@ -104,6 +139,12 @@ impl LibraryScreen {
             original_episodes: None,
             original_watch_later: None,
             original_history: None,
+            playlist_nav_level: PlaylistNavLevel::PlaylistList,
+            playlist_items: Vec::new(),
+            playlist_names: Vec::new(),
+            add_prompt_state: None,
+            playlist_edit_mode: None,
+            add_all_candidates: Vec::new(),
         }
     }
 
@@ -207,13 +248,27 @@ impl LibraryScreen {
         area: Rect,
         player: Option<&AudioPlayer>,
         playing_list: Arc<Mutex<PlayingListManager>>,
+        playlist_manager: Arc<Mutex<PlaylistManager>>,
     ) {
-        let mut constraints = vec![Constraint::Length(3), Constraint::Length(1)];
+        // Refresh playlist names if on Playlists tab
+        if self.current_tab == LibraryTab::Playlists {
+            if let Ok(names) = playlist_manager.lock().list_names() {
+                self.playlist_names = names;
+            }
+        }
 
+        let show_breadcrumb = matches!(
+            self.current_tab,
+            LibraryTab::Favorites | LibraryTab::Playlists
+        );
+
+        let mut constraints = vec![Constraint::Length(3)];
+        if show_breadcrumb {
+            constraints.push(Constraint::Length(1));
+        }
         if self.search_state.is_some() {
             constraints.push(Constraint::Length(3));
         }
-
         constraints.extend(vec![
             Constraint::Min(10),
             Constraint::Length(2),
@@ -226,7 +281,13 @@ impl LibraryScreen {
             .constraints(constraints)
             .split(area);
 
-        let titles: Vec<&str> = vec!["Favorites", "Watch Later", "History", "Playing List"];
+        let titles: Vec<&str> = vec![
+            "Favorites",
+            "Watch Later",
+            "History",
+            "Playing Now",
+            "Playlists",
+        ];
         let tabs = Tabs::new(titles)
             .block(Block::default().borders(Borders::BOTTOM))
             .select(self.current_tab as usize)
@@ -234,23 +295,36 @@ impl LibraryScreen {
             .highlight_style(Style::default().fg(Color::Cyan));
         f.render_widget(tabs, chunks[0]);
 
-        let breadcrumb_text = match &self.nav_level {
-            NavigationLevel::Folders => "Favorites".to_string(),
-            NavigationLevel::Videos { folder_title, .. } => {
-                format!("Favorites > {}", folder_title)
-            }
-            NavigationLevel::Episodes {
-                folder_id_title,
-                video_title,
-                ..
-            } => {
-                format!("Favorites > {} > {}", folder_id_title, video_title)
-            }
-        };
-        let breadcrumb = Paragraph::new(breadcrumb_text).style(Style::default().fg(Color::Yellow));
-        f.render_widget(breadcrumb, chunks[1]);
+        let mut chunk_offset = 1;
 
-        let mut chunk_offset = 2;
+        if show_breadcrumb {
+            let breadcrumb_text = match self.current_tab {
+                LibraryTab::Favorites => match &self.nav_level {
+                    NavigationLevel::Folders => "Favorites".to_string(),
+                    NavigationLevel::Videos { folder_title, .. } => {
+                        format!("Favorites > {}", folder_title)
+                    }
+                    NavigationLevel::Episodes {
+                        folder_id_title,
+                        video_title,
+                        ..
+                    } => {
+                        format!("Favorites > {} > {}", folder_id_title, video_title)
+                    }
+                },
+                LibraryTab::Playlists => match &self.playlist_nav_level {
+                    PlaylistNavLevel::PlaylistList => "Playlists".to_string(),
+                    PlaylistNavLevel::PlaylistContents { name } => {
+                        format!("Playlists > {}", name)
+                    }
+                },
+                _ => String::new(),
+            };
+            let breadcrumb =
+                Paragraph::new(breadcrumb_text).style(Style::default().fg(Color::Yellow));
+            f.render_widget(breadcrumb, chunks[chunk_offset]);
+            chunk_offset += 1;
+        }
 
         if let Some(ref search_state) = self.search_state {
             SearchBar::new(&search_state.query, search_state.cursor_position)
@@ -321,7 +395,7 @@ impl LibraryScreen {
                     ))
                 })
                 .collect(),
-            LibraryTab::PlayingList => {
+            LibraryTab::PlayingNow => {
                 let list = playing_list.lock();
                 list.items()
                     .iter()
@@ -342,6 +416,36 @@ impl LibraryScreen {
                     })
                     .collect()
             }
+            LibraryTab::Playlists => match &self.playlist_nav_level {
+                PlaylistNavLevel::PlaylistList => {
+                    if self.playlist_names.is_empty() {
+                        vec![ListItem::new("No playlists yet. Press 'n' to create one.")]
+                    } else {
+                        let pm = playlist_manager.lock();
+                        self.playlist_names
+                            .iter()
+                            .map(|name| {
+                                let count =
+                                    pm.get_items(name).map(|items| items.len()).unwrap_or(0);
+                                ListItem::new(format!("{} ({})", name, count))
+                            })
+                            .collect()
+                    }
+                }
+                PlaylistNavLevel::PlaylistContents { .. } => self
+                    .playlist_items
+                    .iter()
+                    .enumerate()
+                    .map(|(_idx, item)| {
+                        ListItem::new(format!(
+                            "{} - {}  {}",
+                            item.title,
+                            item.artist,
+                            format_duration(item.duration)
+                        ))
+                    })
+                    .collect(),
+            },
         };
 
         let list = if items.is_empty() {
@@ -430,9 +534,17 @@ impl LibraryScreen {
             )
         } else {
             let text = match self.current_tab {
-                LibraryTab::PlayingList => {
+                LibraryTab::PlayingNow => {
                     "[j/k] Navigate  [Enter] Jump  [d] Remove  [Tab] Switch  [/] Search"
                 }
+                LibraryTab::Playlists => match &self.playlist_nav_level {
+                    PlaylistNavLevel::PlaylistList => {
+                        "[j/k] Navigate  [Enter] Open  [n] New  [d] Delete  [r] Rename  [Tab] Switch"
+                    }
+                    PlaylistNavLevel::PlaylistContents { .. } => {
+                        "[j/k] Navigate  [Enter] Play  [d] Remove  [Ctrl+↑/↓] Reorder  [Esc] Back  [Tab] Switch"
+                    }
+                },
                 _ => {
                     "[j/k] Navigate  [Enter] Select  [Esc] Back  [s] Settings  [a] Add to list  [A] Add all  [Tab] Switch  [/] Search"
                 }
@@ -443,6 +555,36 @@ impl LibraryScreen {
             .style(help_style)
             .block(Block::default().borders(Borders::TOP));
         f.render_widget(help, chunks[chunk_offset + 2]);
+
+        if let Some(ref prompt) = self.add_prompt_state {
+            if prompt.is_active {
+                let prompt_title = match prompt.mode {
+                    AddPromptMode::Single => format!("Add '{}' to:", prompt.source_title),
+                    AddPromptMode::All => {
+                        format!("Add {} items to:", self.add_all_candidates.len())
+                    }
+                };
+                let mut prompt_lines: Vec<String> = vec![prompt_title, String::new()];
+                for (i, dest) in prompt.destinations.iter().enumerate() {
+                    let marker = if i == prompt.selected { "> " } else { "  " };
+                    prompt_lines.push(format!("{}{}", marker, dest));
+                }
+                prompt_lines.push(String::new());
+                prompt_lines.push("[j/k] Select  [Enter] Confirm  [Esc] Cancel".to_string());
+
+                let prompt_height = prompt_lines.len() as u16 + 2;
+                let prompt_width = 50u16;
+                let prompt_x = area.width.saturating_sub(prompt_width) / 2;
+                let prompt_y = area.height.saturating_sub(prompt_height) / 2;
+                let prompt_area = Rect::new(prompt_x, prompt_y, prompt_width, prompt_height);
+
+                let prompt_text = prompt_lines.join("\n");
+                let prompt_widget = Paragraph::new(prompt_text)
+                    .block(Block::default().borders(Borders::ALL).title("Add To"))
+                    .style(Style::default().fg(Color::Yellow));
+                f.render_widget(prompt_widget, prompt_area);
+            }
+        }
     }
 
     pub fn next_item(
@@ -507,7 +649,8 @@ impl LibraryScreen {
             },
             LibraryTab::WatchLater => self.watch_later.len(),
             LibraryTab::History => self.history.len(),
-            LibraryTab::PlayingList => playing_list.lock().items().len(),
+            LibraryTab::PlayingNow => playing_list.lock().items().len(),
+            LibraryTab::Playlists => self.playlist_items.len(),
         }
     }
 
@@ -518,7 +661,7 @@ impl LibraryScreen {
         player: &mut Option<AudioPlayer>,
         playback_speed: f32,
     ) -> anyhow::Result<()> {
-        if self.current_tab != LibraryTab::PlayingList {
+        if self.current_tab != LibraryTab::PlayingNow {
             return Ok(());
         }
 
@@ -588,8 +731,11 @@ impl LibraryScreen {
             LibraryTab::WatchLater | LibraryTab::History => {
                 self.play_selected(client, player, playback_speed)?;
             }
-            LibraryTab::PlayingList => {
+            LibraryTab::PlayingNow => {
                 self.handle_jump_to_song(playing_list, client, player, playback_speed)?;
+            }
+            LibraryTab::Playlists => {
+                self.handle_playlists_enter(playing_list, client, player, playback_speed)?;
             }
         }
         Ok(())
@@ -752,7 +898,8 @@ impl LibraryScreen {
                     None
                 }
             }
-            LibraryTab::PlayingList => None,
+            LibraryTab::PlayingNow => None,
+            LibraryTab::Playlists => None,
         };
 
         if let Some(bvid) = bvid {
@@ -856,8 +1003,13 @@ impl LibraryScreen {
                     )
                 })
             }),
-            LibraryTab::PlayingList => {
+            LibraryTab::PlayingNow => {
                 self.status_message = Some("Already in playing list".to_string());
+                return Ok(());
+            }
+            LibraryTab::Playlists => {
+                self.status_message =
+                    Some("Use 'a' from other tabs to add to playlists".to_string());
                 return Ok(());
             }
         }) else {
@@ -975,8 +1127,13 @@ impl LibraryScreen {
                 }
                 items
             }
-            LibraryTab::PlayingList => {
+            LibraryTab::PlayingNow => {
                 self.status_message = Some("Already in playing list".to_string());
+                return Ok(());
+            }
+            LibraryTab::Playlists => {
+                self.status_message =
+                    Some("Use 'A' from other tabs to add all to playlists".to_string());
                 return Ok(());
             }
         };
@@ -993,6 +1150,18 @@ impl LibraryScreen {
     }
 
     pub fn go_back(&mut self) {
+        if self.current_tab == LibraryTab::Playlists {
+            match &self.playlist_nav_level {
+                PlaylistNavLevel::PlaylistContents { .. } => {
+                    self.playlist_nav_level = PlaylistNavLevel::PlaylistList;
+                    self.playlist_items.clear();
+                    self.list_state.select(Some(0));
+                }
+                PlaylistNavLevel::PlaylistList => {}
+            }
+            return;
+        }
+
         match &self.nav_level {
             NavigationLevel::Videos { .. } => {
                 self.nav_level = NavigationLevel::Folders;
@@ -1103,7 +1272,7 @@ impl LibraryScreen {
         player: &mut Option<AudioPlayer>,
         playback_speed: f32,
     ) -> anyhow::Result<()> {
-        if self.current_tab != LibraryTab::PlayingList {
+        if self.current_tab != LibraryTab::PlayingNow && self.current_tab != LibraryTab::Playlists {
             return Ok(());
         }
 

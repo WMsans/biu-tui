@@ -160,7 +160,13 @@ impl App {
                     Screen::Login(login) => login.render(f, area),
                     Screen::Library(library) => {
                         let mut lib = (*library).clone();
-                        lib.render(f, area, self.player.as_ref(), self.playing_list.clone());
+                        lib.render(
+                            f,
+                            area,
+                            self.player.as_ref(),
+                            self.playing_list.clone(),
+                            self.playlist_manager.clone(),
+                        );
                     }
                     Screen::Settings(settings_screen) => {
                         let mut s = settings_screen.clone();
@@ -282,8 +288,9 @@ impl App {
                         library.current_tab = match library.current_tab {
                             LibraryTab::Favorites => LibraryTab::WatchLater,
                             LibraryTab::WatchLater => LibraryTab::History,
-                            LibraryTab::History => LibraryTab::PlayingList,
-                            LibraryTab::PlayingList => LibraryTab::Favorites,
+                            LibraryTab::History => LibraryTab::PlayingNow,
+                            LibraryTab::PlayingNow => LibraryTab::Playlists,
+                            LibraryTab::Playlists => LibraryTab::Favorites,
                         };
                         library.reset_selection_for_tab(self.playing_list.clone());
                     }
@@ -534,7 +541,7 @@ impl App {
                             }
                         }
                     }
-                    LibraryTab::PlayingList => {
+                    LibraryTab::PlayingNow => {
                         let playing_list = self.playing_list.lock();
                         let items = playing_list.items();
                         library.folders = items
@@ -545,6 +552,15 @@ impl App {
                                 title: format!("{} - {}", item.title, item.artist),
                                 media_count: 1,
                             })
+                            .collect();
+                    }
+                    LibraryTab::Playlists => {
+                        // Search in playlist names
+                        library.playlist_names = library
+                            .playlist_names
+                            .iter()
+                            .filter(|name| name.to_lowercase().contains(&query.to_lowercase()))
+                            .cloned()
                             .collect();
                     }
                 }
