@@ -5,6 +5,7 @@ use crate::playing_list::{PlayingListManager, PlaylistItem};
 use crate::playlists::PlaylistManager;
 use crate::storage::LoopMode;
 use crate::ui::widgets::SearchBar;
+use crossterm::event::KeyCode;
 use parking_lot::Mutex;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -702,6 +703,7 @@ impl LibraryScreen {
         client: Arc<Mutex<BilibiliClient>>,
         player: &mut Option<AudioPlayer>,
         playing_list: Arc<Mutex<PlayingListManager>>,
+        playlist_manager: Arc<Mutex<PlaylistManager>>,
         playback_speed: f32,
     ) -> anyhow::Result<()> {
         match self.current_tab {
@@ -735,7 +737,69 @@ impl LibraryScreen {
                 self.handle_jump_to_song(playing_list, client, player, playback_speed)?;
             }
             LibraryTab::Playlists => {
-                self.handle_playlists_enter(playing_list, client, player, playback_speed)?;
+                self.handle_playlists_enter(
+                    playing_list,
+                    playlist_manager,
+                    client,
+                    player,
+                    playback_speed,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_playlists_enter(
+        &mut self,
+        playing_list: Arc<Mutex<PlayingListManager>>,
+        playlist_manager: Arc<Mutex<PlaylistManager>>,
+        client: Arc<Mutex<BilibiliClient>>,
+        player: &mut Option<AudioPlayer>,
+        playback_speed: f32,
+    ) -> anyhow::Result<()> {
+        match &self.playlist_nav_level.clone() {
+            PlaylistNavLevel::PlaylistList => {
+                let idx = match self.list_state.selected() {
+                    Some(i) if i < self.playlist_names.len() => i,
+                    _ => return Ok(()),
+                };
+                let name = self.playlist_names[idx].clone();
+                let pm = playlist_manager.lock();
+                self.playlist_items = pm.get_items(&name)?;
+                drop(pm);
+                self.playlist_nav_level = PlaylistNavLevel::PlaylistContents { name };
+                self.list_state.select(Some(0));
+            }
+            PlaylistNavLevel::PlaylistContents { name } => {
+                let name = name.clone();
+                let idx = match self.list_state.selected() {
+                    Some(i) if i < self.playlist_items.len() => i,
+                    _ => {
+                        self.status_message = Some("No tracks in playlist".to_string());
+                        return Ok(());
+                    }
+                };
+                let items = self.playlist_items.clone();
+                {
+                    let mut pl = playing_list.lock();
+                    pl.clear();
+                    pl.add_all(items);
+                    pl.jump_to(idx);
+                }
+                let item = &self.playlist_items[idx];
+                let audio_stream = {
+                    let client = client.lock();
+                    let rt = tokio::runtime::Runtime::new()?;
+                    rt.block_on(client.get_best_audio(&item.bvid, item.cid))?
+                };
+                if player.is_none() {
+                    *player = Some(AudioPlayer::new()?);
+                }
+                if let Some(p) = player {
+                    p.play(&audio_stream.url, playback_speed)?;
+                    self.now_playing = Some((item.title.clone(), item.artist.clone()));
+                }
+                self.status_message = Some(format!("Loaded '{}' into Playing Now", name));
             }
         }
         Ok(())
@@ -1314,6 +1378,438 @@ impl LibraryScreen {
         }
 
         Ok(())
+    }
+
+    pub fn handle_playlists_create(&mut self, _playlist_manager: Arc<Mutex<PlaylistManager>>) {
+        if self.search_state.is_some() {
+            return;
+        }
+        self.playlist_edit_mode = Some(PlaylistEditMode::Creating);
+        self.search_state = Some(crate::screens::SearchState::new());
+        self.status_message =
+            Some("Type playlist name and press Enter to create, Esc to cancel".to_string());
+    }
+
+    pub fn handle_playlists_delete(&mut self, playlist_manager: Arc<Mutex<PlaylistManager>>) {
+        let idx = match self.list_state.selected() {
+            Some(i) if i < self.playlist_names.len() => i,
+            _ => return,
+        };
+        let name = self.playlist_names[idx].clone();
+        match playlist_manager.lock().delete(&name) {
+            Ok(_) => {
+                self.playlist_names.remove(idx);
+                if idx >= self.playlist_names.len() && !self.playlist_names.is_empty() {
+                    self.list_state.select(Some(self.playlist_names.len() - 1));
+                } else if self.playlist_names.is_empty() {
+                    self.list_state.select(None);
+                }
+                self.status_message = Some(format!("Deleted '{}'", name));
+            }
+            Err(e) => {
+                self.status_message = Some(format!("Failed to delete: {}", e));
+            }
+        }
+    }
+
+    pub fn handle_playlists_rename(&mut self, _playlist_manager: Arc<Mutex<PlaylistManager>>) {
+        let idx = match self.list_state.selected() {
+            Some(i) if i < self.playlist_names.len() => i,
+            _ => return,
+        };
+        let name = self.playlist_names[idx].clone();
+        if self.search_state.is_some() {
+            return;
+        }
+        self.playlist_edit_mode = Some(PlaylistEditMode::Renaming {
+            old_name: name.clone(),
+        });
+        self.search_state = Some(crate::screens::SearchState::new());
+        self.status_message = Some(format!(
+            "Renaming '{}': type new name and press Enter",
+            name
+        ));
+    }
+
+    pub fn handle_playlists_remove_item(&mut self, playlist_manager: Arc<Mutex<PlaylistManager>>) {
+        let idx = match self.list_state.selected() {
+            Some(i) if i < self.playlist_items.len() => i,
+            _ => return,
+        };
+        let name = match &self.playlist_nav_level {
+            PlaylistNavLevel::PlaylistContents { name } => name.clone(),
+            _ => return,
+        };
+        match playlist_manager.lock().remove_item(&name, idx) {
+            Ok(_) => {
+                self.playlist_items.remove(idx);
+                if idx >= self.playlist_items.len() && !self.playlist_items.is_empty() {
+                    self.list_state.select(Some(self.playlist_items.len() - 1));
+                } else if self.playlist_items.is_empty() {
+                    self.list_state.select(None);
+                }
+                self.status_message = Some("Removed from playlist".to_string());
+            }
+            Err(e) => {
+                self.status_message = Some(format!("Failed to remove: {}", e));
+            }
+        }
+    }
+
+    pub fn handle_playlists_reorder(
+        &mut self,
+        playlist_manager: Arc<Mutex<PlaylistManager>>,
+        direction_up: bool,
+    ) {
+        let idx = match self.list_state.selected() {
+            Some(i) if i < self.playlist_items.len() => i,
+            _ => return,
+        };
+        let name = match &self.playlist_nav_level {
+            PlaylistNavLevel::PlaylistContents { name } => name.clone(),
+            _ => return,
+        };
+
+        let to = if direction_up {
+            if idx == 0 {
+                return;
+            }
+            idx - 1
+        } else {
+            if idx + 1 >= self.playlist_items.len() {
+                return;
+            }
+            idx + 1
+        };
+
+        match playlist_manager.lock().reorder(&name, idx, to) {
+            Ok(_) => {
+                let item = self.playlist_items.remove(idx);
+                self.playlist_items.insert(to, item);
+                self.list_state.select(Some(to));
+            }
+            Err(e) => {
+                self.status_message = Some(format!("Failed to reorder: {}", e));
+            }
+        }
+    }
+
+    pub fn toggle_add_prompt(
+        &mut self,
+        playing_list: Arc<Mutex<PlayingListManager>>,
+        playlist_manager: Arc<Mutex<PlaylistManager>>,
+        client: Arc<Mutex<BilibiliClient>>,
+        mode: AddPromptMode,
+    ) {
+        if self.add_prompt_state.is_some() {
+            self.add_prompt_state = None;
+            return;
+        }
+
+        let idx = match self.list_state.selected() {
+            Some(i) => i,
+            None => {
+                self.status_message = Some("No item selected".to_string());
+                return;
+            }
+        };
+
+        if mode == AddPromptMode::All {
+            let candidates: Vec<PlaylistItem> = match self.current_tab {
+                LibraryTab::Favorites => match &self.nav_level {
+                    NavigationLevel::Videos { .. } => self
+                        .resources
+                        .iter()
+                        .map(|r| PlaylistItem {
+                            bvid: r.bvid.clone(),
+                            cid: 0,
+                            title: r.title.clone(),
+                            artist: r.upper.name.clone(),
+                            duration: r.duration,
+                        })
+                        .collect(),
+                    NavigationLevel::Episodes { bvid, .. } => {
+                        let artist = self
+                            .current_video_info
+                            .as_ref()
+                            .map(|v| v.owner.name.clone())
+                            .unwrap_or_default();
+                        self.episodes
+                            .iter()
+                            .map(|ep| PlaylistItem {
+                                bvid: bvid.clone(),
+                                cid: ep.cid,
+                                title: ep.part.clone(),
+                                artist: artist.clone(),
+                                duration: ep.duration,
+                            })
+                            .collect()
+                    }
+                    _ => Vec::new(),
+                },
+                LibraryTab::WatchLater => self
+                    .watch_later
+                    .iter()
+                    .map(|w| PlaylistItem {
+                        bvid: w.bvid.clone(),
+                        cid: 0,
+                        title: w.title.clone(),
+                        artist: w.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
+                        duration: w.duration,
+                    })
+                    .collect(),
+                LibraryTab::History => self
+                    .history
+                    .iter()
+                    .filter_map(|h| {
+                        h.bvid.as_ref().map(|bvid| PlaylistItem {
+                            bvid: bvid.clone(),
+                            cid: 0,
+                            title: h.title.clone(),
+                            artist: h.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
+                            duration: h.duration,
+                        })
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            if candidates.is_empty() {
+                self.status_message = Some("No items to add".to_string());
+                return;
+            }
+            self.add_all_candidates = candidates;
+        }
+
+        let source_title = match self.current_tab {
+            LibraryTab::Favorites => match &self.nav_level {
+                NavigationLevel::Folders => {
+                    self.status_message = Some("Navigate into a folder first".to_string());
+                    return;
+                }
+                NavigationLevel::Videos { .. } => self
+                    .resources
+                    .get(idx)
+                    .map(|r| r.title.clone())
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                NavigationLevel::Episodes { .. } => self
+                    .episodes
+                    .get(idx)
+                    .map(|e| e.part.clone())
+                    .unwrap_or_else(|| "Unknown".to_string()),
+            },
+            LibraryTab::WatchLater => self
+                .watch_later
+                .get(idx)
+                .map(|w| w.title.clone())
+                .unwrap_or_else(|| "Unknown".to_string()),
+            LibraryTab::History => self
+                .history
+                .get(idx)
+                .map(|h| h.title.clone())
+                .unwrap_or_else(|| "Unknown".to_string()),
+            _ => {
+                self.status_message = Some("Nothing to add here".to_string());
+                return;
+            }
+        };
+
+        let mut destinations = vec!["Playing Now".to_string()];
+        if let Ok(names) = playlist_manager.lock().list_names() {
+            destinations.extend(names);
+        }
+
+        if destinations.len() <= 1 {
+            if mode == AddPromptMode::All {
+                let _ = self.add_all_to_playing_list(playing_list, client);
+            } else {
+                let _ = self.add_to_playing_list(playing_list, client);
+            }
+            return;
+        }
+
+        self.add_prompt_state = Some(AddPromptState {
+            is_active: true,
+            destinations,
+            selected: 0,
+            source_title,
+            mode,
+        });
+    }
+
+    pub fn resolve_add_target(
+        &mut self,
+        playing_list: Arc<Mutex<PlayingListManager>>,
+        playlist_manager: Arc<Mutex<PlaylistManager>>,
+        client: Arc<Mutex<BilibiliClient>>,
+    ) -> anyhow::Result<()> {
+        let prompt = match &self.add_prompt_state {
+            Some(p) if p.is_active => p.clone(),
+            _ => return Ok(()),
+        };
+
+        let selected_dest = prompt.destinations[prompt.selected].clone();
+
+        if selected_dest == "Playing Now" {
+            if prompt.mode == AddPromptMode::All {
+                return self.add_all_to_playing_list(playing_list, client);
+            }
+            self.add_prompt_state = None;
+            let result = self.add_to_playing_list(playing_list, client);
+            self.status_message = Some("Added to Playing Now".to_string());
+            return result;
+        }
+
+        if prompt.mode == AddPromptMode::All {
+            let count = self.add_all_candidates.len();
+            let rt = tokio::runtime::Runtime::new()?;
+            for mut item in self.add_all_candidates.clone() {
+                if item.cid == 0 {
+                    let cid = {
+                        let client = client.lock();
+                        rt.block_on(client.get_video_info(&item.bvid))?.cid
+                    };
+                    item.cid = cid;
+                }
+                playlist_manager.lock().add_item(&selected_dest, item)?;
+            }
+            self.add_prompt_state = None;
+            self.status_message = Some(format!("Added {} items to '{}'", count, selected_dest));
+            return Ok(());
+        }
+
+        let item = self.extract_selected_playlist_item(client.clone())?;
+        playlist_manager.lock().add_item(&selected_dest, item)?;
+        self.add_prompt_state = None;
+        self.status_message = Some(format!("Added to '{}'", selected_dest));
+        Ok(())
+    }
+
+    fn extract_selected_playlist_item(
+        &self,
+        client: Arc<Mutex<BilibiliClient>>,
+    ) -> anyhow::Result<PlaylistItem> {
+        let idx = self
+            .list_state
+            .selected()
+            .ok_or_else(|| anyhow::anyhow!("No item selected"))?;
+
+        if let LibraryTab::Favorites = self.current_tab {
+            if let NavigationLevel::Episodes { bvid, .. } = &self.nav_level {
+                if let Some(episode) = self.episodes.get(idx) {
+                    let artist = self
+                        .current_video_info
+                        .as_ref()
+                        .map(|v| v.owner.name.clone())
+                        .unwrap_or_default();
+                    return Ok(PlaylistItem {
+                        bvid: bvid.clone(),
+                        cid: episode.cid,
+                        title: episode.part.clone(),
+                        artist,
+                        duration: episode.duration,
+                    });
+                }
+            }
+        }
+
+        let (bvid, title, artist, duration) = match self.current_tab {
+            LibraryTab::Favorites => match &self.nav_level {
+                NavigationLevel::Videos { .. } => self
+                    .resources
+                    .get(idx)
+                    .map(|r| {
+                        (
+                            r.bvid.clone(),
+                            r.title.clone(),
+                            r.upper.name.clone(),
+                            r.duration,
+                        )
+                    })
+                    .ok_or_else(|| anyhow::anyhow!("No resource at index"))?,
+                _ => anyhow::bail!("Navigate into a folder first"),
+            },
+            LibraryTab::WatchLater => self
+                .watch_later
+                .get(idx)
+                .map(|w| {
+                    (
+                        w.bvid.clone(),
+                        w.title.clone(),
+                        w.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
+                        w.duration,
+                    )
+                })
+                .ok_or_else(|| anyhow::anyhow!("No item at index"))?,
+            LibraryTab::History => {
+                let h = self
+                    .history
+                    .get(idx)
+                    .ok_or_else(|| anyhow::anyhow!("No item at index"))?;
+                let bvid = h
+                    .bvid
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("History item has no bvid"))?;
+                (
+                    bvid,
+                    h.title.clone(),
+                    h.owner.as_ref().map(|o| o.name.clone()).unwrap_or_default(),
+                    h.duration,
+                )
+            }
+            _ => anyhow::bail!("Cannot add from this tab"),
+        };
+
+        let cid = {
+            let client = client.lock();
+            let rt = tokio::runtime::Runtime::new()?;
+            let video_info = rt.block_on(client.get_video_info(&bvid))?;
+            video_info.cid
+        };
+
+        Ok(PlaylistItem {
+            bvid,
+            cid,
+            title,
+            artist,
+            duration,
+        })
+    }
+
+    pub fn handle_add_prompt_key(
+        &mut self,
+        key: crossterm::event::KeyCode,
+        playing_list: Arc<Mutex<PlayingListManager>>,
+        playlist_manager: Arc<Mutex<PlaylistManager>>,
+        client: Arc<Mutex<BilibiliClient>>,
+    ) -> anyhow::Result<bool> {
+        let prompt = match &mut self.add_prompt_state {
+            Some(p) if p.is_active => p,
+            _ => return Ok(false),
+        };
+
+        match key {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if prompt.selected + 1 < prompt.destinations.len() {
+                    prompt.selected += 1;
+                }
+                Ok(true)
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if prompt.selected > 0 {
+                    prompt.selected -= 1;
+                }
+                Ok(true)
+            }
+            KeyCode::Enter => {
+                self.resolve_add_target(playing_list, playlist_manager, client)?;
+                Ok(true)
+            }
+            KeyCode::Esc => {
+                self.add_prompt_state = None;
+                Ok(true)
+            }
+            _ => Ok(true),
+        }
     }
 }
 

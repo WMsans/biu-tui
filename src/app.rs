@@ -16,7 +16,7 @@ use crate::download::DownloadManager;
 use crate::mpris::{MprisCommand, MprisManager};
 use crate::playing_list::{PlayingListManager, PlaylistItem};
 use crate::playlists::PlaylistManager;
-use crate::screens::library::NavigationLevel;
+use crate::screens::library::{AddPromptMode, NavigationLevel, PlaylistEditMode, PlaylistNavLevel};
 use crate::screens::{
     LibraryScreen, LibraryTab, LoginScreen, LoginState, Searchable, SettingsScreen,
 };
@@ -228,6 +228,20 @@ impl App {
 
                 // Handle search input if in search mode
                 if let Some(ref mut search_state) = library.search_state {
+                    // Handle add prompt keys first (modal)
+                    if library.add_prompt_state.is_some() {
+                        let handled = library.handle_add_prompt_key(
+                            code,
+                            self.playing_list.clone(),
+                            self.playlist_manager.clone(),
+                            self.client.clone(),
+                        );
+                        if let Err(e) = handled {
+                            library.status_message = Some(format!("Add failed: {}", e));
+                        }
+                        return Ok(());
+                    }
+
                     match code {
                         KeyCode::Esc => {
                             self.exit_search_mode(true)?;
@@ -301,11 +315,52 @@ impl App {
                         library.prev_item(&self.playing_list);
                     }
                     KeyCode::Enter => {
+                        if library.current_tab == LibraryTab::Playlists
+                            && library.playlist_edit_mode.is_some()
+                        {
+                            let edit_mode = library.playlist_edit_mode.take().unwrap();
+                            let query = library
+                                .search_state
+                                .as_ref()
+                                .map(|s| s.query.clone())
+                                .unwrap_or_default();
+                            library.search_state = None;
+
+                            match edit_mode {
+                                PlaylistEditMode::Creating => {
+                                    match self.playlist_manager.lock().create(&query) {
+                                        Ok(_) => {
+                                            library.status_message =
+                                                Some(format!("Created '{}'", query));
+                                        }
+                                        Err(e) => {
+                                            library.status_message =
+                                                Some(format!("Create failed: {}", e));
+                                        }
+                                    }
+                                }
+                                PlaylistEditMode::Renaming { old_name } => {
+                                    match self.playlist_manager.lock().rename(&old_name, &query) {
+                                        Ok(_) => {
+                                            library.status_message =
+                                                Some(format!("Renamed to '{}'", query));
+                                        }
+                                        Err(e) => {
+                                            library.status_message =
+                                                Some(format!("Rename failed: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                            return Ok(());
+                        }
+
                         let old_now_playing = library.now_playing.clone();
                         if let Err(e) = library.handle_enter(
                             self.client.clone(),
                             &mut self.player,
                             self.playing_list.clone(),
+                            self.playlist_manager.clone(),
                             self.settings.playback_speed,
                         ) {
                             eprintln!("Failed to handle enter: {}", e);
@@ -315,35 +370,94 @@ impl App {
                         self.apply_volume();
                         self.notify_mpris_if_playback_changed(&old_now_playing, &new_now_playing);
                     }
-                    KeyCode::Esc | KeyCode::Backspace => library.go_back(),
-                    KeyCode::Char('a') => {
-                        if let Err(e) = library
-                            .add_to_playing_list(self.playing_list.clone(), self.client.clone())
-                        {
-                            library.status_message =
-                                Some(format!("Failed to add to playing list: {}", e));
+                    KeyCode::Esc | KeyCode::Backspace => {
+                        if library.playlist_edit_mode.is_some() {
+                            library.playlist_edit_mode = None;
+                            library.search_state = None;
+                            library.status_message = None;
+                        } else {
+                            library.go_back();
                         }
+                    }
+                    KeyCode::Char('a') => {
+                        library.toggle_add_prompt(
+                            self.playing_list.clone(),
+                            self.playlist_manager.clone(),
+                            self.client.clone(),
+                            AddPromptMode::Single,
+                        );
                     }
                     KeyCode::Char('A') => {
-                        if let Err(e) = library
-                            .add_all_to_playing_list(self.playing_list.clone(), self.client.clone())
-                        {
-                            library.status_message =
-                                Some(format!("Failed to add all to playing list: {}", e));
-                        }
+                        library.toggle_add_prompt(
+                            self.playing_list.clone(),
+                            self.playlist_manager.clone(),
+                            self.client.clone(),
+                            AddPromptMode::All,
+                        );
                     }
                     KeyCode::Char('d') => {
-                        let old_now_playing = library.now_playing.clone();
-                        if let Err(e) = library.handle_remove_song(
-                            self.playing_list.clone(),
-                            self.client.clone(),
-                            &mut self.player,
-                            self.settings.playback_speed,
-                        ) {
-                            eprintln!("Failed to remove song: {}", e);
+                        if library.current_tab == LibraryTab::Playlists {
+                            if matches!(
+                                library.playlist_nav_level,
+                                PlaylistNavLevel::PlaylistContents { .. }
+                            ) {
+                                library.handle_playlists_remove_item(self.playlist_manager.clone());
+                            } else if matches!(
+                                library.playlist_nav_level,
+                                PlaylistNavLevel::PlaylistList
+                            ) {
+                                library.handle_playlists_delete(self.playlist_manager.clone());
+                            }
+                        } else {
+                            let old_now_playing = library.now_playing.clone();
+                            if let Err(e) = library.handle_remove_song(
+                                self.playing_list.clone(),
+                                self.client.clone(),
+                                &mut self.player,
+                                self.settings.playback_speed,
+                            ) {
+                                eprintln!("Failed to remove song: {}", e);
+                            }
+                            let new_now_playing = library.now_playing.clone();
+                            self.notify_mpris_if_playback_changed(
+                                &old_now_playing,
+                                &new_now_playing,
+                            );
                         }
-                        let new_now_playing = library.now_playing.clone();
-                        self.notify_mpris_if_playback_changed(&old_now_playing, &new_now_playing);
+                    }
+                    KeyCode::Char('n') => {
+                        if library.current_tab == LibraryTab::Playlists
+                            && library.playlist_nav_level == PlaylistNavLevel::PlaylistList
+                        {
+                            library.handle_playlists_create(self.playlist_manager.clone());
+                        }
+                    }
+                    KeyCode::Char('r') => {
+                        if library.current_tab == LibraryTab::Playlists
+                            && library.playlist_nav_level == PlaylistNavLevel::PlaylistList
+                        {
+                            library.handle_playlists_rename(self.playlist_manager.clone());
+                        }
+                    }
+                    KeyCode::Char('u') => {
+                        if library.current_tab == LibraryTab::Playlists
+                            && matches!(
+                                library.playlist_nav_level,
+                                PlaylistNavLevel::PlaylistContents { .. }
+                            )
+                        {
+                            library.handle_playlists_reorder(self.playlist_manager.clone(), true);
+                        }
+                    }
+                    KeyCode::Char('U') => {
+                        if library.current_tab == LibraryTab::Playlists
+                            && matches!(
+                                library.playlist_nav_level,
+                                PlaylistNavLevel::PlaylistContents { .. }
+                            )
+                        {
+                            library.handle_playlists_reorder(self.playlist_manager.clone(), false);
+                        }
                     }
                     KeyCode::Char('s') => {
                         self.previous_library = Some((**library).clone());
